@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en" ng-app>
+  <head>
+    <title>Chat Example</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/css/bootstrap-responsive.min.css">
+    <style>
+      body {
+        padding-top: 60px;
+      }
+    </style>
+    <script>
+      function ScrapeController($scope) {
+        var socket = io.connect();
+
+        $scope.posts = [];
+        $scope.postkey = '';
+        $scope.post = '';
+        $scope.blogname = '';
+        $scope.serverblogname = '';
+        $scope.picture = '';
+
+        socket.on('connect', function () {
+          $scope.setBlogName();
+        });
+
+        socket.on('tellclientposts', function (msg) {
+          $scope.posts = msg;
+          $scope.$apply();
+        });
+
+        socket.on('tellclientblogname', function (msg) {
+          $scope.serverblogname = msg;
+          $scope.$apply();
+        });
+
+        socket.on('tellclientpicture', function (msg) {
+          $scope.picture = msg;
+          $scope.$apply();
+        });
+
+        //$scope.send = function send() {
+        //  console.log('Sending message:', $scope.text);
+        //  socket.emit('message', $scope.text);
+        //  $scope.text = '';
+        //};
+
+        $scope.setPost = function setPost(idx) {
+          $scope.postkey=idx;
+          console.log('Setting post:', $scope.postkey);
+          socket.emit('tellserverpostkey', $scope.postkey);
+        };
+
+        $scope.setBlogName = function setBlogName() {
+          console.log('Setting blog name:', $scope.blogname);
+          socket.emit('biteme');
+          socket.emit('tellserverblogname', $scope.blogname);
+        };
+        
+      }
+    </script>
+  </head>
+  <body>
+    <div class="container" ng-controller="ScrapeController">
+      <div class="navbar navbar-fixed-top navbar-inverse">
+        <div class="navbar-inner">
+          <div class="pull-right">
+            <a href="https://c9.io" class="brand">Scraper</a>
+          </div>
+        </div>
+      </div>
+      <div class="page-header">
+        <h1>Dashboard</h1>
+      </div>
+      
+      <div class="row">
+        <div class="span4">
+          <ul class="nav nav-list well">
+            <li class="nav-header">Blog Information</li>
+            <small>
+              <li>client blogname={{blogname}}</li>
+              <li>server blogname=</li>
+              <b><li ng-bind="serverblogname"></li></b>
+              <li>Post Picture URL=</li>
+              <b><li>{{picture}}</li></b>
+            </small>
+          </ul>
+          <ul class="nav nav-list well">
+            <li class="nav-header">Post Information</li>
+            <small>
+              <li>client blogname={{blogname}}</li>
+              <li>server blogname=</li>
+              <b><li ng-bind="serverblogname"></li></b>
+              <li>Post Picture URL=</li>
+              <li><b>{{picture}}</b></li>
+            </small>
+          </ul>
+        </div>
+        
+        <ul class="span8">
+          <form ng-submit="setBlogName()">
+            <li class="input-append">
+              <input type="text" class="span6" ng-model="blogname" placeholder="Blog Name">
+              <input type="submit" class="span2 btn btn-primary" value="Set" ng-disabled="!blogname">
+            </li>
+          </form>
+          <form ng-submit="setPost(postkey)">
+            <li class="input-append">
+              <input type="text" class="span6" ng-model="post" placeholder="Post Selection">
+              <input type="submit" class="span2 btn btn-primary" value="Select" ng-disabled="!post">
+            </li>
+          </form>
+        </ul>
+        
+        <div class="span8">
+          <table class="table table-striped table-bordered">
+            <thead>
+              <tr>
+                <th class="span2">Post</th>
+                <th class="span6">URL</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr ng-repeat="p in posts" ng-click="setPost(p.key)">
+                <td class="span2" ng-bind=p.key></td>
+                <td class="span3" ng-bind=p.url></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    <div class="row span4 offset4">
+      <img src={{picture}}>
+    </div>
+    </div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/jquery.min.js"></script>
+    <script src="/js/bootstrap.min.js"></script>
+    <script src="/js/angular.min.js"></script>
+  </body>
+</html>
