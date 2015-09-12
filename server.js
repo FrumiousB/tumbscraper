@@ -30,6 +30,8 @@ var model = {
   'server' : Object,
   'posts' : [Object],
   'blogname': String,
+  'ip' : String,
+  'port' : Number,
   'decoratedblogname' : String,
   'post' : String,
   'picture' : String,
@@ -41,8 +43,18 @@ var model = {
 
 model.blogname = config.blogname;
 
+if (process.env.IP)
+  model.ip = process.env.IP
+else  
+  model.ip = config.ip;
+  
+if (process.env.PORT)
+  model.port = process.env.PORT
+else
+  model.port = config.port;
+
 var setupDatabase = function (setupCallback) {
-  mongoose.connect('mongodb://' + process.env.IP);
+  mongoose.connect('mongodb://' + model.ip);
 
   var picSchema = mongoose.Schema({
   	"url" : String,
@@ -177,7 +189,7 @@ function bindToTumblrBlog(blogname, consumer_key) {
 
 function listenWebServer(setupCallback){
   console.log("listenWebServer: starting");
-  model.server.listen(process.env.PORT || 3000, process.env.IP || "0.0.0.0", function () {
+  model.server.listen(process.env.PORT || 3000, model.ip || "0.0.0.0", function () {
       console.log("listenWebServer: we're done here.");
       setupCallback();
   });
