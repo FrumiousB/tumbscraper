@@ -39,6 +39,8 @@ var model = {
   'dbRecords' : [Object]
 };
 
+model.blogname = config.blogname;
+
 var setupDatabase = function (setupCallback) {
   mongoose.connect('mongodb://' + process.env.IP);
 
