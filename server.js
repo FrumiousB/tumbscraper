@@ -29,6 +29,7 @@ var picsavepath = config.savepath;
 var model = {
   'server' : Object,
   'posts' : [Object],
+  'tummblrClient' : Object,
   'blogname': String,
   'ip' : String,
   'port' : Number,
@@ -53,7 +54,8 @@ if (process.env.PORT)
 else
   model.port = config.port;
 
-var setupDatabase = function (setupCallback) {
+var setupDatabase = function (next) {
+  console.log('setupDatabase: starting');
   mongoose.connect('mongodb://' + model.ip);
 
   var picSchema = mongoose.Schema({
@@ -67,24 +69,25 @@ var setupDatabase = function (setupCallback) {
   model.PicType = mongoose.model('Pic', picSchema);
 
   var db = mongoose.connection;
-  db.on('error', console.error.bind(console, 'mongodb: connection error'));
+  db.on('error', console.error.bind(console, 'setupDatabase: db connection error'));
   db.once('open', function (callback) {
-    console.log('mongodb: connected successfully, database open');
+    console.log('setupDatabase: connected successfully, database open');
     console.log("setupDatabase: we're done here");
-    setupCallback();
+    next();
   });
 };
 
-var setupWebserver = function(setupCallback) {
+var setupWebServer = function(next) {
+  console.log("setupWebServer: starting")
   var router = express();
   model.server = http.createServer(router);
   router.use(express.static(path.resolve(__dirname, 'client')));
   console.log("setupWebServer: we're done here")
-  setupCallback();
+  next();
 };
 
 
-var setupDashboard = function(setupCallback) {
+var setupDashboard = function(next) {
 
   var io = socketio.listen(model.server);
   
@@ -128,8 +131,8 @@ var setupDashboard = function(setupCallback) {
               };
   
           
-          broadcast('tellclientblogname', model.decoratedblogname);
-          broadcast('tellclientposts', model.posts);
+          dashboardBroadcast('tellclientblogname', model.decoratedblogname);
+          dashboardBroadcast('tellclientposts', model.posts);
         });
   
   // maybe you got an actual post
@@ -145,23 +148,30 @@ var setupDashboard = function(setupCallback) {
           model.picture = model.posts[model.post].url;
           
           // tell him what he's won
-          broadcast('tellclientpost', model.post);
-          broadcast('tellclientpicture', model.picture);
+          dashboardBroadcast('tellclientpost', model.post);
+          dashboardBroadcast('tellclientpicture', model.picture);
         });
     });
 
- //   var addr = server.address();
-  //  console.log("server is " + server)
-  //  console.log("Dashboard server listening at", addr.address + ":" + addr.port);
-    setupCallback();
+  var addr = model.server.address();
+  console.log("setupDashboard: listening at", addr + ":" + addr);
+  console.log("setupDashboard: we're done here");
+  next();
 };
+
+
+function dashboardBroadcast(event, data) {
+  model.sockets.forEach(function (socket) {
+    socket.emit(event, data);
+  });
+}
 
 
 function bindToTumblrBlog(blogname, consumer_key) {
   console.log("bindToTumblrBlog: starting");
-  var client = tumblr.createClient(consumer_key);
+  model.tumblrClient = tumblr.createClient(consumer_key);
   console.log("bindToTumblrBlog: getting photo posts from", blogname);
-  client.posts(blogname, { type: 'photo'}, function(err,data) {
+  model.tumblrClient.posts(blogname, { type: 'photo'}, function(err,data) {
     
     
     if (err) {
@@ -171,35 +181,17 @@ function bindToTumblrBlog(blogname, consumer_key) {
     } else {
       console.log("bindToTumblrBlog: Got a response from tumblr");
     }
-  
-    model.posts = data["posts"];
-    console.log("bindToTumblrBlog: There are " + model.posts.length + " posts")
-
-    var localphotos = [];
-    model.posts.forEach(function (thispost) {
-      console.log("bindToTumblrBlog: Post ID is ",thispost.id," URL is ",thispost.short_url);
-      thispost.photos.forEach(function (thisphoto) {
-          localphotos.push(thisphoto);
-      });
-    });
-    model.photos = localphotos;
-    processPhotos();
   });
 }
 
-function listenWebServer(setupCallback){
+function listenWebServer(next){
   console.log("listenWebServer: starting");
-  model.server.listen(process.env.PORT || 3000, model.ip || "0.0.0.0", function () {
+  model.server.listen(model.port || 3000, model.ip || "0.0.0.0", function () {
       console.log("listenWebServer: we're done here.");
-      setupCallback();
+      next();
   });
 }
 
-function broadcast(event, data) {
-  model.sockets.forEach(function (socket) {
-    socket.emit(event, data);
-  });
-}
 
 function processPhotos() {
   console.log("processPhotos: starting");
@@ -219,25 +211,79 @@ function processPhotos() {
 }
 
 
-function doBody() {
+function doBody(next) {
   console.log("Calling bindToTumblrBlog");
   bindToTumblrBlog(model.blogname,tumblr_consumer_key);
   console.log("Returned from bindToTumblr blog, we're done here");
+  next();
 }
 
-var startupTasksZero = [
-    setupDatabase,
-    setupWebserver
-];
+function doPostsBatch(batch, next) {
+  console.log("Posts Batch Worker: starting batch @", batch.offset);
+  model.tumblrClient.posts(model.blogname, { type: 'photo', offset: batch.offset}, function(err,response) {
+    if (err) {
+      console.log("Posts Batch Worker: Got an error");
+      console.log(err);
+      return;
+    } else {
+      console.log("Posts Batch Worker: Got a response from tumblr");
+    }
+  
+    // Fuck, now what?
+    // I guess -- get the posts and pictures from this batch
+ 
+  
+    var posts = response["posts"];
+ 
+    // this could be the last batch, in which case we return without adding to the queue or processing posts
+    if (posts.length == 0) {
+      console.log("Posts Batch Worker: No more posts");
+      return next();
+    }
+  
+    var localphotos = [];
+    posts.forEach(function (thispost) {
+      console.log("Posts Batch Worker: Post ID is ",thispost.id," URL is ",thispost.short_url);
+      thispost.photos.forEach(function (thisphoto) {
+          localphotos.push(thisphoto);
+      });
+    });
+    
+    localphotos.forEach(function (thisphoto) {
+      console.log("Posts Batch Worker: extracted photo ",thisphoto.original_size.url);
+    });
 
-var startupTasksOne = [
-  setupDashboard,
-  listenWebServer
-];
+    var nextOffset = batch.offset + posts.length;
+    var newbatch = { 
+      'offset':nextOffset,
+    };
+    
+    q.push(newbatch);
+    console.log("Posts Batch Worker: done with batch");
+    next();
+  });
+}
 
-async.parallel(startupTasksZero,function(){
-  async.parallel(startupTasksOne,doBody());
-});
+
+function postMain(next) {
+  // start initial batch at zero
+  q.push({'offset' : 0});
+}
+
+var q = async.queue(doPostsBatch);
+
+var startupTasks = {
+  labelSetupDatabase: setupDatabase,
+  labelSetupWebServer: setupWebServer,
+  labelSetupDashboard: ['labelSetupWebServer', setupDashboard],
+  labelListenWebServer: ['labelSetupWebServer', 'labelSetupDashboard', listenWebServer],
+  main: ['labelListenWebServer','labelSetupDatabase', doBody],
+  postmain: ['main', postMain]
+};
+
+async.auto(startupTasks);
+// set up queue and worker
+
 
 
 
