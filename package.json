@@ -10,6 +10,7 @@
     "express": "~3.2.4",
     "socket.io": "~0.9.14",
     "tumblr.js": "~0.0.5",
-    "mongoose": "~4.1.5"
+    "mongoose": "~4.1.5",
+    "oauth": "~0.9.13"
   }
 }

@@ -7,14 +7,25 @@
 var http = require('http');
 var path = require('path');
 var tumblr = require('tumblr.js');
-var mongoose = require('mongoose');
-var config = require('../config/config');
-
-var async = require('async');
 var socketio = require('socket.io');
 var express = require('express');
+var mongoose = require('mongoose');
+var async = require('async');
 
-var tumblr_consumer_key = config.consumer_key;
+var config = require('../config/config');
+var oauthmodule = require('./oauthmodule.js');
+var batcher = require('./likebatch.js');
+
+var tumblrConsumerKey = config.tumblr_consumer_key;
+var tumblrConsumerSecret = config.tumblr_consumer_secret;
+var tumblrOauthAccessToken = undefined;
+var tumblrOauthAccessTokenSecret = undefined;
+
+if (config.tumblr_use_cached_access_token === true) {
+  tumblrOauthAccessToken = config.tumblr_access_token;
+  tumblrOauthAccessTokenSecret = config.tumblr_access_secret;
+}
+
 var picsavepath = config.savepath;
 
 //
@@ -28,11 +39,12 @@ var picsavepath = config.savepath;
 
 var model = {
   'server' : Object,
+  'app' : Object,
   'posts' : [Object],
   'tummblrClient' : Object,
   'blogname': String,
-  'ip' : String,
-  'port' : Number,
+  'IP' : String,
+  'PORT' : Number,
   'decoratedblogname' : String,
   'post' : String,
   'picture' : String,
@@ -45,18 +57,18 @@ var model = {
 model.blogname = config.blogname;
 
 if (process.env.IP)
-  model.ip = process.env.IP
+  model.IP = process.env.IP
 else  
-  model.ip = config.ip;
+  model.IP = config.ip;
   
 if (process.env.PORT)
-  model.port = process.env.PORT
+  model.PORT = process.env.PORT
 else
-  model.port = config.port;
+  model.PORT = config.port;
 
 var setupDatabase = function (next) {
   console.log('setupDatabase: starting');
-  mongoose.connect('mongodb://' + model.ip);
+  mongoose.connect('mongodb://' + model.IP);
 
   var picSchema = mongoose.Schema({
   	"url" : String,
@@ -79,9 +91,16 @@ var setupDatabase = function (next) {
 
 var setupWebServer = function(next) {
   console.log("setupWebServer: starting")
-  var router = express();
-  model.server = http.createServer(router);
-  router.use(express.static(path.resolve(__dirname, 'client')));
+  var app = express();
+  app.use(express.logger('dev'));
+  app.use(express.bodyParser());
+  app.use(express.methodOverride());
+  app.use(express.errorHandler());
+
+  model.server = http.createServer(app);
+  app.use(express.static(path.resolve(__dirname, 'client')));
+  model.app = app;
+
   console.log("setupWebServer: we're done here")
   next();
 };
@@ -169,29 +188,49 @@ function dashboardBroadcast(event, data) {
 
 function bindToTumblrBlog(blogname, consumer_key) {
   console.log("bindToTumblrBlog: starting");
-  model.tumblrClient = tumblr.createClient(consumer_key);
-  console.log("bindToTumblrBlog: getting photo posts from", blogname);
-  model.tumblrClient.posts(blogname, { type: 'photo'}, function(err,data) {
-    
-    
-    if (err) {
-      console.log("bindToTumblrBlog: Got an error");
-      console.log(err);
-      return;
-    } else {
-      console.log("bindToTumblrBlog: Got a response from tumblr");
-    }
-  });
+
+  var arg0 = {
+    'consumer_key' : tumblrConsumerKey,
+    'consumer_secret' : tumblrConsumerSecret,
+    'token' : tumblrOauthAccessToken,
+    'token_secret' : tumblrOauthAccessTokenSecret
+  };
+//  console.log(arg0);
+  model.tumblrClient = tumblr.createClient(arg0);
 }
 
 function listenWebServer(next){
   console.log("listenWebServer: starting");
-  model.server.listen(model.port || 3000, model.ip || "0.0.0.0", function () {
-      console.log("listenWebServer: we're done here.");
+  model.server.listen(model.PORT, model.IP, function () {
+      console.log("listenWebServer:",model.IP,':',model.PORT);
       next();
   });
 }
 
+function setupOauth(next) {
+  console.log("setupOauth: starting");
+  if (!tumblrOauthAccessToken || !tumblrOauthAccessTokenSecret)
+  {
+    oauthmodule.tumblrOauthSetup(model.app, tumblrConsumerKey, tumblrConsumerSecret, function ProcessOauthSetupResults(accessKeys, err) {
+      if (err) {
+        console.log("error getting tumblr oauth access");
+        return;
+      }
+      else {
+        console.log("you got in");
+        console.log("Access token =", accessKeys.access_token);
+        console.log("Access secret =", accessKeys.access_secret);
+        tumblrOauthAccessToken = accessKeys.access_token;
+        tumblrOauthAccessTokenSecret = accessKeys.access_secret;
+        return next();
+      }
+    });
+  } else {
+  // if we're using cached token, we can just return successfully
+  console.log('Using cached token');
+  next();
+  }
+}
 
 function processPhotos() {
   console.log("processPhotos: starting");
@@ -210,83 +249,32 @@ function processPhotos() {
   });
 }
 
-
-function doBody(next) {
+function setupTumblr(next) {
   console.log("Calling bindToTumblrBlog");
-  bindToTumblrBlog(model.blogname,tumblr_consumer_key);
+  bindToTumblrBlog(tumblrConsumerKey,next);
   console.log("Returned from bindToTumblr blog, we're done here");
   next();
 }
 
-function doPostsBatch(batch, next) {
-  console.log("Posts Batch Worker: starting batch @", batch.offset);
-  model.tumblrClient.posts(model.blogname, { type: 'photo', offset: batch.offset}, function(err,response) {
-    if (err) {
-      console.log("Posts Batch Worker: Got an error");
-      console.log(err);
-      return;
-    } else {
-      console.log("Posts Batch Worker: Got a response from tumblr");
-    }
-  
-    // Fuck, now what?
-    // I guess -- get the posts and pictures from this batch
- 
-  
-    var posts = response["posts"];
- 
-    // this could be the last batch, in which case we return without adding to the queue or processing posts
-    if (posts.length == 0) {
-      console.log("Posts Batch Worker: No more posts");
-      return next();
-    }
-  
-    var localphotos = [];
-    posts.forEach(function (thispost) {
-      console.log("Posts Batch Worker: Post ID is ",thispost.id," URL is ",thispost.short_url);
-      thispost.photos.forEach(function (thisphoto) {
-          localphotos.push(thisphoto);
-      });
-    });
-    
-    localphotos.forEach(function (thisphoto) {
-      console.log("Posts Batch Worker: extracted photo ",thisphoto.original_size.url);
-    });
-
-    var nextOffset = batch.offset + posts.length;
-    var newbatch = { 
-      'offset':nextOffset,
-    };
-    
-    q.push(newbatch);
-    console.log("Posts Batch Worker: done with batch");
-    next();
-  });
-}
-
-
-function postMain(next) {
+// set up queue and worker
+var q = async.queue(batcher.doPostsBatch,1);
+function main(next) {
   // start initial batch at zero
-  q.push({'offset' : 0});
+  batcher.init(model.tumblrClient,q);
+  q.push({before : 0});
 }
 
-var q = async.queue(doPostsBatch);
-
-var startupTasks = {
-  labelSetupDatabase: setupDatabase,
-  labelSetupWebServer: setupWebServer,
-  labelSetupDashboard: ['labelSetupWebServer', setupDashboard],
-  labelListenWebServer: ['labelSetupWebServer', 'labelSetupDashboard', listenWebServer],
-  main: ['labelListenWebServer','labelSetupDatabase', doBody],
-  postmain: ['main', postMain]
+// program run sequence
+var runTasks = {
+  SetupDatabase: setupDatabase,
+  SetupWebServer: setupWebServer,
+  SetupDashboard: ['SetupWebServer', setupDashboard],
+  ListenWebServer: ['SetupWebServer', 
+                    'SetupDashboard', 
+                    listenWebServer],
+  SetupOauth: ['ListenWebServer', setupOauth],
+  SetupTumblr: ['SetupDatabase', 'SetupOauth', setupTumblr],
+  main: ['SetupTumblr', main]
 };
 
-async.auto(startupTasks);
-// set up queue and worker
-
-
-
-
-
-
-
+async.auto(runTasks);
