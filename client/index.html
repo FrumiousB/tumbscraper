@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" ng-app>
   <head>
-    <title>Chat Example</title>
+    <title>Tumblr Scraper Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="/css/bootstrap.min.css">
     <link rel="stylesheet" href="/css/bootstrap-responsive.min.css">
@@ -14,53 +14,68 @@
       function ScrapeController($scope) {
         var socket = io.connect();
 
-        $scope.posts = [];
-        $scope.postkey = '';
-        $scope.post = '';
-        $scope.blogname = '';
-        $scope.serverblogname = '';
-        $scope.picture = '';
+        $scope.dbRunState = '';
+        $scope.appRunState = '';
+        $scope.tumblrSyncRunState  = '';
+        $scope.fsSyncRunState = '';
+        $scope.dbRunState = '';
+        $scope.error = 'no error';
+        $scope.tumblrPostsSoFar = 0;
+        $scope.tumblrCurrentTime = new Date();
+        $scope.logBuffer = [];
 
         socket.on('connect', function () {
-          $scope.setBlogName();
         });
 
-        socket.on('tellclientposts', function (msg) {
-          $scope.posts = msg;
-          $scope.$apply();
+        socket.on('update', function (object) {
+          for (var property in object) {
+            $scope.$apply(function updateCommand() {
+              switch(property) {
+                
+                case 'tumblrPostsSoFar':
+                  $scope.tumblrPostsSoFar = object[property];
+                  break;
+                  
+                case 'tumblrCurrentTime':
+                  $scope.tumblrCurrentTime = object[property];
+                  break;
+                  
+                case 'tumblrSyncRunState':
+                  $scope.tumblrSyncRunState = object[property];
+                  break;
+              
+                case 'appRunState':
+                  $scope.appRunState = object[property];
+                  break;
+                
+                default:
+                  $scope.error = 'bad command from server:'+ property + 
+                                 ':' + object[property];
+              }
+            });
+          }
+        });
+        
+        socket.on('log', function (message) {
+          $scope.$apply(function updateLogBuffer () {
+            $scope.logBuffer.unshift(message);
+            if ($scope.logBuffer.length > 20)
+              $scope.logBuffer.pop();
+          });
         });
 
-        socket.on('tellclientblogname', function (msg) {
-          $scope.serverblogname = msg;
-          $scope.$apply();
-        });
-
-        socket.on('tellclientpicture', function (msg) {
-          $scope.picture = msg;
-          $scope.$apply();
-        });
-
-        //$scope.send = function send() {
-        //  console.log('Sending message:', $scope.text);
-        //  socket.emit('message', $scope.text);
-        //  $scope.text = '';
-        //};
-
-        $scope.setPost = function setPost(idx) {
-          $scope.postkey=idx;
-          console.log('Setting post:', $scope.postkey);
-          socket.emit('tellserverpostkey', $scope.postkey);
-        };
-
-        $scope.setBlogName = function setBlogName() {
-          console.log('Setting blog name:', $scope.blogname);
-          socket.emit('biteme');
-          socket.emit('tellserverblogname', $scope.blogname);
+        $scope.startTumblrSync = function() {
+          socket.emit('command','tumbsyncstart');
         };
         
+        $scope.stopTumblrSync = function() {
+          socket.emit('command','tumbsyncstop');
+        }
       }
+      
     </script>
   </head>
+  
   <body>
     <div class="container" ng-controller="ScrapeController">
       <div class="navbar navbar-fixed-top navbar-inverse">
@@ -77,39 +92,28 @@
       <div class="row">
         <div class="span4">
           <ul class="nav nav-list well">
-            <li class="nav-header">Blog Information</li>
+            <li class="nav-header">Service Information</li>
             <small>
-              <li>client blogname={{blogname}}</li>
-              <li>server blogname=</li>
-              <b><li ng-bind="serverblogname"></li></b>
-              <li>Post Picture URL=</li>
-              <b><li>{{picture}}</li></b>
+              <li>Scraper Status=<b>{{appRunState}}</b></li>
+              <li>TumbSync Status=<b>{{tumblrSyncRunState}}</b></li>
+              <li>Command flag=<b>{{commandFlag}}</b></li>
             </small>
           </ul>
           <ul class="nav nav-list well">
-            <li class="nav-header">Post Information</li>
+            <li class="nav-header">Tumblr Sync Information</li>
             <small>
-              <li>client blogname={{blogname}}</li>
-              <li>server blogname=</li>
-              <b><li ng-bind="serverblogname"></li></b>
-              <li>Post Picture URL=</li>
-              <li><b>{{picture}}</b></li>
+              <li>Total posts fetched = {{tumblrPostsSoFar}}</li>
+              <li>Datestamp reached = {{tumblrCurrentTime}}</li>
             </small>
           </ul>
         </div>
         
         <ul class="span8">
-          <form ng-submit="setBlogName()">
-            <li class="input-append">
-              <input type="text" class="span6" ng-model="blogname" placeholder="Blog Name">
-              <input type="submit" class="span2 btn btn-primary" value="Set" ng-disabled="!blogname">
-            </li>
+          <form ng-submit="startTumblrSync()">
+             <input type="submit" class="span2 btn btn-primary" value="Start TumbSync" ng-disabled="false">
           </form>
-          <form ng-submit="setPost(postkey)">
-            <li class="input-append">
-              <input type="text" class="span6" ng-model="post" placeholder="Post Selection">
-              <input type="submit" class="span2 btn btn-primary" value="Select" ng-disabled="!post">
-            </li>
+          <form ng-submit="stopTumblrSync()">
+            <input type="submit" class="span2 btn btn-primary" value="Stop TumbSync" ng-disabled="false">
           </form>
         </ul>
         
@@ -117,22 +121,17 @@
           <table class="table table-striped table-bordered">
             <thead>
               <tr>
-                <th class="span2">Post</th>
-                <th class="span6">URL</th>
+                <th class="span8">Log messages</th>
               </tr>
             </thead>
             <tbody>
-              <tr ng-repeat="p in posts" ng-click="setPost(p.key)">
-                <td class="span2" ng-bind=p.key></td>
-                <td class="span3" ng-bind=p.url></td>
+              <tr ng-repeat="message in logBuffer" ng-click="setPost(p.key)">
+                <td class="span8" ng-bind=message></td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
-    <div class="row span4 offset4">
-      <img src={{picture}}>
-    </div>
     </div>
     <script src="/socket.io/socket.io.js"></script>
     <script src="/js/jquery.min.js"></script>

@@ -2,6 +2,7 @@ var express = require('express');
 var oauth = require('oauth');
 var http = require('http');
 var tumblr = require('tumblr.js');
+var logger = require('./multilog.js');
 
 module.exports = {
     tumblrOauthSetup: setupTumblrOauth
@@ -47,7 +48,7 @@ function setupTumblrOauth(app,consumer_key,consumer_secret,callback) {
         if (!tumblrAccessTokens.access_token || !tumblrAccessTokens.access_secret) {
             res.redirect('/auth/request');
         }
-        console.log('get \/')
+        logger.log('get \/')
         res.send('You are logged in and ready to go');
     });
 
@@ -66,9 +67,9 @@ function setupTumblrOauth(app,consumer_key,consumer_secret,callback) {
     
     
     app.get('/auth/callback', function (req, res) {
-        console.log('OAuth callback: URL =',req.originalUrl);
-        console.log('OAuth callback: Trying verifier:', req.query.oauth_verifier);
-        console.log('Oauth callback:',oauthRequestToken.length,':', oauthRequestTokenSecret.length,':',req.query.oauth_verifier.length);
+        logger.log('OAuth callback: URL =',req.originalUrl);
+        logger.log('OAuth callback: Trying verifier:', req.query.oauth_verifier);
+        logger.log('Oauth callback:',oauthRequestToken.length,':', oauthRequestTokenSecret.length,':',req.query.oauth_verifier.length);
         consumer.getOAuthAccessToken(oauthRequestToken, oauthRequestTokenSecret, req.query.oauth_verifier, function(error, _oauthAccessToken, _oauthAccessTokenSecret) {
             if (error) {
                 res.send("Error getting OAuth access token: " + error, 500);
