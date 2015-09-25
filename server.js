@@ -52,11 +52,11 @@ var setupDatabase = function (next) {
   mongoose.connect('mongodb://' + model.IP);
 
   var picSchema = mongoose.Schema({
-  	"url" : String,
-  	"date_liked" : Date,
-  	"date_discovered" :  Date,
-  	"date_downloaded" : Date,
-  	"download_path" : String
+  	url : String,
+  	date_liked : Date,
+  	date_discovered :  Date,
+  	date_downloaded : Date,
+  	download_path : String
   });
 
   model.DbPicRecord = mongoose.model('Pic', picSchema);
@@ -65,14 +65,14 @@ var setupDatabase = function (next) {
   db.on('error', console.error.bind(console, 'setupDatabase: db connection error'));
   db.once('open', function (callback) {
     logger.log('setupDatabase: connected successfully, database open');
-    logger.log("setupDatabase: we're done here");
+    logger.log('setupDatabase: we\'re done here');
     model.dbReadyState = db.readyState;
     next();
   });
 };
 
 var setupWebServer = function(next) {
-  logger.log("setupWebServer: starting")
+  logger.log('setupWebServer: starting');
   var app = express();
   app.use(express.logger('dev'));
   app.use(express.bodyParser());
@@ -83,33 +83,33 @@ var setupWebServer = function(next) {
   app.use(express.static(path.resolve(__dirname, 'client')));
   model.app = app;
 
-  logger.log("setupWebServer: we're done here")
+  logger.log('setupWebServer: we\'re done here');
   next();
 };
 
 function listenWebServer(next){
-  logger.log("listenWebServer: starting");
+  logger.log('listenWebServer: starting');
   var listener = model.server.listen(model.PORT, model.IP, function () {
-      logger.log("listenWebServer:",listener.address().address,':',listener.address().port);
+      logger.log('listenWebServer:',listener.address().address,':',listener.address().port);
       next();
   });
 }
 
 function setupOauth(next) {
-  logger.log("setupOauth: starting");
+  logger.log('TumblrOauthSetup: setupOauth: starting');
   if (!tumblrOauthAccessToken || !tumblrOauthAccessTokenSecret)
   {
     oauthmodule.tumblrOauthSetup(model.app, tumblrConsumerKey, 
                                  tumblrConsumerSecret, 
                                  function ProcessOauthSetup (accessKeys, err) {
       if (err) {
-        logger.log("error getting tumblr oauth access:", err);
+        logger.log('TumblrOAuthSetup: error getting tumblr oauth access:', err);
         return;
       }
       else {
-        logger.log("you got in");
-        logger.log("Access token =", accessKeys.access_token);
-        logger.log("Access secret =", accessKeys.access_secret);
+        logger.log('TumblrOAuthSetup: Auth successful');
+        logger.log('Access token =', accessKeys.access_token);
+        logger.log('Access secret =', accessKeys.access_secret);
         tumblrOauthAccessToken = accessKeys.access_token;
         tumblrOauthAccessTokenSecret = accessKeys.access_secret;
         return next();
@@ -117,14 +117,14 @@ function setupOauth(next) {
     });
   } else {
   // if we're using cached token, we can just return successfully
-  logger.log('Using cached token');
+  logger.log('TumblrOAuthSetup: Using cached token');
   next();
   }
 }
 
 function processPhotos() {
-  logger.log("processPhotos: starting");
-  logger.log("processPhotos: Populating " + model.photos.length + " dbRecords");
+  logger.log('processPhotos: starting');
+  logger.log('processPhotos: Populating ' + model.photos.length + ' dbRecords');
   model.photos.forEach(function (inPic) {
     var thisPic = new model.PicType ({
       'date_liked' : new Date(),
@@ -146,13 +146,13 @@ function setupDashboard(next) {
 }
 
 function setupTumblr(next) {
-  logger.log("setupTumblr: starting");
+  logger.log('setupTumblr: starting');
  
   var arg0 = {
-    'consumer_key' : tumblrConsumerKey,
-    'consumer_secret' : tumblrConsumerSecret,
-    'token' : tumblrOauthAccessToken,
-    'token_secret' : tumblrOauthAccessTokenSecret
+    consumer_key : tumblrConsumerKey,
+    consumer_secret : tumblrConsumerSecret,
+    token : tumblrOauthAccessToken,
+    token_secret : tumblrOauthAccessTokenSecret
   };
 
   model.tumblrClient = tumblr.createClient(arg0);
@@ -162,9 +162,9 @@ function setupTumblr(next) {
 }
 
 function setupTumblrSync(next) {
-  logger.log('setupTumbSync:starting');
+  logger.log('setupTumbSync: starting');
   tumblrSync.init(model, dashboard.notify, model.tumblrClient);
-  logger.log('setupTumbSync:we\'re done here');
+  logger.log('setupTumbSync: we\'re done here');
   next();
 }
 

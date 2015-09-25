@@ -106,11 +106,11 @@ function doPostsBatch(batch, next) {
   var beforetime = new Date(before*1000);
   model.tumblrCurrentTime = beforetime;
   notify({'tumblrCurrentTime': model.tumblrCurrentTime});
-  logger.log("Posts Batch Worker: starting batch @", beforetime.toUTCString() , ', ', 
-              postsSoFar, 'posts fetched');
+  logger.log('TumbSyncBatchWorker: starting batch @', beforetime.toUTCString() , ', ', 
+              postsSoFar, ' posts fetched');
   
   if (model.tumblrSyncRunState === appmodel.TUMBLR_SYNC_RUNSTATE_STOPPING) {
-    logger.log('Noticed runstate == stopping.  batch worker stopping.');
+    logger.log('TumbSyncBatchWorker: Runstate == stopping. Worker stopping.');
     model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_STOPPED;
     notify({'tumblrSyncRunState' : appmodel.TUMBLR_SYNC_RUNSTATE_STOPPED});
     // still need to tell work queue manager (async) that this worker is done
@@ -122,7 +122,7 @@ function doPostsBatch(batch, next) {
   if (before === 0) { // if we're starting at the beginning
     findTimeStampOfFreshestPost(function processFreshestTimestamp (err, response) {
         if (err) {
-          logger.log('doPostsBatch: error from TimeStampOfLatestPost:',err)
+          logger.log('TumbSyncBatchWorker: error from TimeStampOfLatestPost:',err)
           return next();
         } else { 
           before = response + 1; // we want the freshest post and everything 
@@ -155,8 +155,7 @@ function doPostsBatch(batch, next) {
         
         // now go through and do work to (eventually) log them in the database
         photos.forEach(function (thisphoto) {
-          // logger.log("Posts Batch Worker: extracted photo ",
-          //            thisphoto.original_size.url);
+        //            thisphoto.original_size.url);
         });
     
         // Now we set up parameter block for the next batch

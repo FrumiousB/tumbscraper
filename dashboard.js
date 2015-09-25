@@ -61,7 +61,7 @@ function init (m,c) {
     
     });
   
-    logger.log("setupDashboard: done: listening at", dboardModel.IP + ":" + dboardModel.PORT);
+    logger.log('setupDashboard: done: listening at', dboardModel.IP + ':' + dboardModel.PORT);
 };
 
 function sendCurrentModel(socket) {

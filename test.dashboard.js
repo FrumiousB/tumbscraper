@@ -85,7 +85,7 @@ var controller = { init: fakeControllerInit,
                    execute: fakeControllerExecute};
                    
 var setupWebServer = function(next) {
-  logger.log("setupWebServer: starting")
+  logger.log('setupWebServer: starting');
   var app = express();
   app.use(express.logger('dev'));
   app.use(express.bodyParser());
@@ -96,14 +96,14 @@ var setupWebServer = function(next) {
   app.use(express.static(path.resolve(__dirname, 'client')));
   model.app = app;
 
-  logger.log("setupWebServer: we're done here")
+  logger.log('setupWebServer: we\'re done here');
   next();
 };
 
 function listenWebServer(next){
-  logger.log("listenWebServer: starting");
+  logger.log('listenWebServer: starting');
   var listener = model.server.listen(model.PORT, model.IP, function () {
-      logger.log("listenWebServer:",listener.address().address,':',
+      logger.log('listenWebServer:',listener.address().address,':',
                   listener.address().port);
       next();
   });

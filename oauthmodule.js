@@ -36,13 +36,13 @@ function setupTumblrOauth(app,consumer_key,consumer_secret,callback) {
     tumblrConsumerKey = consumer_key;
     tumblrConsumerSecret = consumer_secret;
     consumer = new oauth.OAuth(
-    "http://www.tumblr.com/oauth/request_token",
-    "http://www.tumblr.com/oauth/access_token",
+    'http://www.tumblr.com/oauth/request_token',
+    'http://www.tumblr.com/oauth/access_token',
     tumblrConsumerKey,
     tumblrConsumerSecret,
-    "1.0A",
-    "https://scrape-frumiousb.c9.io/auth/callback",
-    "HMAC-SHA1");
+    '1.0A',
+    'https://scrape-frumiousb.c9.io/auth/callback',
+    'HMAC-SHA1');
 
     app.get('/', function (req, res) {
         if (!tumblrAccessTokens.access_token || !tumblrAccessTokens.access_secret) {
@@ -55,12 +55,12 @@ function setupTumblrOauth(app,consumer_key,consumer_secret,callback) {
     app.get('/auth/request', function (req, res) {
         consumer.getOAuthRequestToken(function(error, oauthToken, oauthTokenSecret){
             if (error) {
-                res.send("Error getting OAuth request token: " + error, 500);
+                res.send('Error getting OAuth request token: ' + error, 500);
             } else {
                 oauthRequestToken = oauthToken,
                 oauthRequestTokenSecret = oauthTokenSecret;
     
-                res.redirect("http://www.tumblr.com/oauth/authorize?oauth_token=" + oauthRequestToken);
+                res.redirect('http://www.tumblr.com/oauth/authorize?oauth_token=' + oauthRequestToken);
             }
         });
     });
@@ -72,7 +72,7 @@ function setupTumblrOauth(app,consumer_key,consumer_secret,callback) {
         logger.log('Oauth callback:',oauthRequestToken.length,':', oauthRequestTokenSecret.length,':',req.query.oauth_verifier.length);
         consumer.getOAuthAccessToken(oauthRequestToken, oauthRequestTokenSecret, req.query.oauth_verifier, function(error, _oauthAccessToken, _oauthAccessTokenSecret) {
             if (error) {
-                res.send("Error getting OAuth access token: " + error, 500);
+                res.send('Error getting OAuth access token: ' + error, 500);
                 callback(null, error);
             } else {
 
