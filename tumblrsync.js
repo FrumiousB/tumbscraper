@@ -90,12 +90,12 @@ function findTimeStampOfFreshestPost(callback) {
     if (err) {
       logger.log('findTimeStampOfLatestPost: Got an error from tumblr');
       logger.log(err);
-      callback(err,undefined);
+      callback(err,null);
     } else { // otherwise we got a post
       var timestamp = response.liked_posts[0].liked_timestamp;
       var tdate = new Date(timestamp*1000);
       logger.log('findTimeStampOfFreshestPost: timestamp=',tdate.toUTCString());
-      callback(undefined,timestamp);
+      callback(null,timestamp);
     }
   });
 }

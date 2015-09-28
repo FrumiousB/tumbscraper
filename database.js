@@ -99,7 +99,7 @@ function setConfig (newConfig,callback) {
                     logger.log('setConfig: got err from save:',err);
                     var outererr = new Error('setConfig: failed to save config');
                     outererr.previous = error;
-                    callback(outererr, undefined);
+                    callback(outererr, null);
                 } else {
                     // logger.log('dbSetConfig: saved record for the first time');
                     callback (null, newConfig);
