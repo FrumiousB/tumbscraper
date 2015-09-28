@@ -19,6 +19,7 @@ var oauthmodule = require('./oauthmodule.js');
 var tumblrSync = require('./tumblrsync.js');
 var dashboard = require('./dashboard.js');
 var controller = require('./controller.js');
+var database = require('./database.js');
 
 var model = appmodel.model;
 
@@ -47,30 +48,6 @@ if (process.env.PORT)
 else
   model.PORT = config.port;
 
-var setupDatabase = function (next) {
-  logger.log('setupDatabase: starting');
-  mongoose.connect('mongodb://' + model.IP);
-
-  var picSchema = mongoose.Schema({
-  	url : String,
-  	date_liked : Date,
-  	date_discovered :  Date,
-  	date_downloaded : Date,
-  	download_path : String
-  });
-
-  model.DbPicRecord = mongoose.model('Pic', picSchema);
-
-  var db = mongoose.connection;
-  db.on('error', console.error.bind(console, 'setupDatabase: db connection error'));
-  db.once('open', function (callback) {
-    logger.log('setupDatabase: connected successfully, database open');
-    logger.log('setupDatabase: we\'re done here');
-    model.dbReadyState = db.readyState;
-    next();
-  });
-};
-
 var setupWebServer = function(next) {
   logger.log('setupWebServer: starting');
   var app = express();
@@ -90,13 +67,44 @@ var setupWebServer = function(next) {
 function listenWebServer(next){
   logger.log('listenWebServer: starting');
   var listener = model.server.listen(model.PORT, model.IP, function () {
-      logger.log('listenWebServer:',listener.address().address,':',listener.address().port);
+      logger.log('listenWebServer:',listener.address().address,':',
+        listener.address().port);
       next();
   });
 }
 
+function setupDatabase(next){
+  logger.log('setupDatabase: starting');
+  database.init(model,next);
+  logger.log('setupDatabase: we\'re done here');
+}
+
+function setupDatabaseDefaults(next){
+    database.getConfig(function processResults(error, results) {
+      if (error) {
+        var outererr = new Error(
+          'setupDatabaseDefaults: error from getconfig');
+        outererr.previous = error;
+        throw outererr;
+      } else {
+        model.dbConfig = results;
+        return next();
+      }
+    });
+}
+ 
 function setupOauth(next) {
-  logger.log('TumblrOauthSetup: setupOauth: starting');
+  logger.log('setupOauth: starting');
+  
+  // get cached credentials from database
+
+  tumblrOauthAccessToken = model.dbConfig.tumblrOauthAccessToken;
+  tumblrOauthAccessTokenSecret = model.dbConfig.tumblrOauthAccessTokenSecret;
+  setupOauthHelper(next);
+}
+
+function setupOauthHelper(next) {
+
   if (!tumblrOauthAccessToken || !tumblrOauthAccessTokenSecret)
   {
     oauthmodule.tumblrOauthSetup(model.app, tumblrConsumerKey, 
@@ -108,20 +116,58 @@ function setupOauth(next) {
       }
       else {
         logger.log('TumblrOAuthSetup: Auth successful');
-        logger.log('Access token =', accessKeys.access_token);
-        logger.log('Access secret =', accessKeys.access_secret);
+//        logger.log('Access token =', accessKeys.access_token);
+//        logger.log('Access secret =', accessKeys.access_secret);
         tumblrOauthAccessToken = accessKeys.access_token;
         tumblrOauthAccessTokenSecret = accessKeys.access_secret;
+        model.dbConfig.tumblrOauthAccessToken = tumblrOauthAccessToken;
+        model.dbConfig.tumblrOauthAccessTokenSecret = 
+          tumblrOauthAccessTokenSecret;
+        logger.log('TumblrOAuthSetup: Saving new access keys in database');
+        database.setConfig(model.dbConfig, function checkResult(err, result) {
+          if (err) {
+            logger.log('TumblrOAuthSetup: ', err);
+            var outererr = new Error(
+              'TumblrOAuthSetup: failed to save new keys');
+            outererr.previous = err;
+            return next();
+          }
+        });
         return next();
       }
     });
   } else {
-  // if we're using cached token, we can just return successfully
-  logger.log('TumblrOAuthSetup: Using cached token');
-  next();
+  // if we're using cached tokens, we can see if they're still good
+    logger.log('TumblrOAuthSetup: Using cached token');
+  
+    // let's check to see if the tokens are actually good
+    var client = tumblr.createClient({
+      consumer_key: tumblrConsumerKey,
+      consumer_secret: tumblrConsumerSecret,
+      token: tumblrOauthAccessToken,
+      token_secret: tumblrOauthAccessTokenSecret
+    });
+    
+    client.userInfo(function (err, data) {
+      if (err) {
+        // if something failed, we can imagine the tokens were bad and try to 
+        // re-authenticate
+        logger.log(
+          'setupTumblrOauth: cached tokens didn\'t work, need to re-auth');
+        model.tumblrOauthAccessToken = tumblrOauthAccessToken = null;
+        model.tumblrOauthAccessTokenSecret = 
+          tumblrOauthAccessTokenSecret = null;
+        // call ourselves again with null tokens to do re-auth
+        setupOauthHelper(next);
+      } else { // if everything went fine, then we can be done
+        logger.log('setupTumblrOauth: cached tokens are good.');
+        next();
+      }
+    });
   }
 }
 
+// this function is not used anywhere; keepint it for inspiration
 function processPhotos() {
   logger.log('processPhotos: starting');
   logger.log('processPhotos: Populating ' + model.photos.length + ' dbRecords');
@@ -189,7 +235,8 @@ var runTasks = {
   listenWebServer: ['setupWebServer', 
                     'setupDashboard', 
                     listenWebServer],
-  setupOauth: ['listenWebServer', setupOauth],
+  setupDatabaseDefaults: ['setupDatabase',setupDatabaseDefaults],
+  setupOauth: ['listenWebServer', 'setupDatabaseDefaults', setupOauth],
   setupTumblr: ['setupOauth', setupTumblr],
   setupTumblrSync: ['setupTumblr', 'setupDatabase', setupTumblrSync],
   main: ['setupTumblrSync','setupDashboard', main]
