@@ -1,37 +1,13 @@
-/* Persistent objects for Tumblr Scraper */
+/* Persistent config for Tumblr Scraper 
+   Requires database module but invoker shouldn't know that */
 
 var mongoose = require('mongoose');
 var logger = require('./multilog.js');
-var appmodel = require('./model.js');  // only for constants
 
-var model = undefined // filled in by init
-var db = undefined // filled in by init
-var configSchemaInitializer = undefined;
-var picSchemaInitializer = undefined;
+var db = undefined; // filled in by init
+var DbConfig = undefined;
 
-module.exports = {
-  init: init,
-  getConfig: getConfig,
-  setConfig: setConfig,
-  getPicType: getPicType
-};
-
-// m is the model object
-// next is the async callback to continue
-function init (m, next) {
-
-  logger.log('dbInit: starting');
-    
-  if (model != undefined) {
-      var err = new Error('dbInit: called init twice');
-      throw err;
-  }
-  
-  model = m;
-  
-  mongoose.connect('mongodb://' + model.IP);
-
-  configSchemaInitializer = {
+var configSchemaInitializer = {
     locator: String,
     tumblrOauthAccessToken: String,
     tumblrOauthAccessTokenSecret: String,
@@ -39,52 +15,60 @@ function init (m, next) {
     tumblrOldestPost: Number,
     fsFreshestPic: Date,
     fsOldestPic: Date,
-  };
+};
+
+module.exports = {
+  init: init,
+  getConfig: getConfig,
+  setConfig: setConfig,
+  getConfigType: getConfigType
+};
+
+// ip is the ip we should use to connect to db
+// TODO: we should update this to take like a conneciton string or
+// something
+// next is the async callback to continue
+function init (ip, callback) {
+
+  // logger.log('appstate:init: starting');
+    
+  if (db != undefined) {
+      var err = new Error('appstate:init: called init twice');
+      throw err;
+  }
+
+  mongoose.set('debug', true);
+  
+  //mongoose.connect('mongodb://' + ip);
+  //db = mongoose.connection;
+
+  db = mongoose.createConnection('mongodb://' + ip); 
 
   var configSchema = mongoose.Schema(configSchemaInitializer);
+  DbConfig = db.model('Config', configSchema);
 
-  model.DbConfig = mongoose.model('Config', configSchema);
-
-  picSchemaInitializer = {
-  	url : String,
-  	id : String,
-  	parentPostId : String,
-  	parentPostURL : String,
-  	dateLiked : Number,
-  	dateDiscovered :  Date,
-  	dateDownloaded : Date,
-  	downloadPath : String
-  };
-
-  var picSchema = mongoose.Schema(picSchemaInitializer);
-
-  model.DbPic = mongoose.model('Pic', picSchema);
-
-  db = mongoose.connection;
   db.on('error', console.error.bind(console, 
-                                    'setupDatabase: db connection error'));
-  db.once('open', function (callback) {
-    logger.log('dbInit: connected successfully, database open');
-    logger.log('dbInit: we\'re done here');
-    model.dbReadyState = db.readyState;
-    next();
+                                    'appstate:init: db connection error'));
+  db.once('open', function (cb) {
+    logger.log('appstate:init: connected successfully, database open');
+    callback(null);
   });
 }
 
 function setConfig (newConfig,callback) {
+    logger.log('appstate:setConfig:starting');
     
     if (db === undefined) {
-        var err = new Error('dbGetConfig: not initialized');
+        var err = new Error('appstate:setConfig: not initialized');
         throw err;
     }
 
     newConfig.locator = 'CURRENT';
     
-    
-    model.DbConfig.find({ locator : 'CURRENT'}, function doResults(error,results) {
-    
+    DbConfig.find({ locator : 'CURRENT'}, 
+        function doResults(error,results) {
         if (error) {
-            logger.log('dbSetConfig: error from find', error);
+            logger.log('appstate:setConfig: error from find', error);
             throw error;
         }
         
@@ -93,15 +77,18 @@ function setConfig (newConfig,callback) {
         // if there is no current config record, save this one
         
         if (results.length === 0) {
-            // logger.log('dbSetConfig: saving config for first time:',newConfig._id);
+            // logger.log('dbSetConfig: saving config for first time:',
+            // newConfig._id);
             newConfig.save(function PostSaveCallback (err) {
                 if (err) {
-                    logger.log('setConfig: got err from save:',err);
-                    var outererr = new Error('setConfig: failed to save config');
+                    logger.log('appstate:setConfig: got err from save:',err);
+                    var outererr = new Error(
+                        'appstate:setConfig: failed to save config');
                     outererr.previous = error;
                     callback(outererr, null);
                 } else {
                     // logger.log('dbSetConfig: saved record for the first time');
+                    logger.log('appstate:setConfig:we\'re done here');
                     callback (null, newConfig);
                 }
             });
@@ -120,10 +107,11 @@ function setConfig (newConfig,callback) {
             // or type conversion, because the below loop should be able to
             // be written much more simply.  ConfigSchemaInitializer is where
             // we defined the fields we use in the config record.  We use it
-            // here to enumerate the property names we care about
+            // here to enumerate the property names we care about for copying
             
             if (current._id != newConfig._id) {
-                var propsToCopy = Object.getOwnPropertyNames(configSchemaInitializer);
+                var propsToCopy = 
+                    Object.getOwnPropertyNames(configSchemaInitializer);
                 for (var prop in propsToCopy) {
                     current[propsToCopy[prop]] = newConfig[propsToCopy[prop]]; 
                 }
@@ -141,6 +129,7 @@ function setConfig (newConfig,callback) {
                     callback(outererr,null);
                 } else {
                     // logger.log('dbSetConfig: saved updated config record');
+                    logger.log('appstate:setConfig:we\'re done here');
                     callback(null,current);
                 }
             });
@@ -151,20 +140,24 @@ function setConfig (newConfig,callback) {
 function getConfig (callback) {
     
     if (db === undefined) {
-        var err = new Error('dbGetConfig: not initialized');
+        var err = new Error('appstate:GetConfig: not initialized');
         throw err;
     }
     
-    model.DbConfig.find({ locator : 'CURRENT'}, function doResults(err, results) {
+    // logger.log('getConfig: starting');
+
+    DbConfig.find({ locator : 'CURRENT'}, 
+      function doResults(err, results) {
+        // logger.log('getConfig: doResults: starting');
         if (err) {
-            var outererr = new Error('dbGetConfig: find failed getting current config record');
+            var outererr = new Error(
+                'appstate:GetConfig: find failed getting current config record');
             outererr.previous = err;
             callback(outererr,null);
         }
-        
         if (results.length != 1) {
             var err = new Error(
-                'getConfig: got incorrect # of config records:', 
+                'appstate:getConfig: got incorrect # of config records:', 
                 results.length);
             callback(err, null);
         } else {
@@ -174,5 +167,16 @@ function getConfig (callback) {
     });
 }
 
-function getPicType () {}
+function getConfigType (cb) {
+    
+    if (db === undefined) {
+        var err = new Error('appstateGetConfigType: not initialized');
+        throw err;
+    }
+    
+    // logger.log('getConfigType: starting');
 
+    return DbConfig;
+    
+    // logger.log('getConfigType: done');
+}

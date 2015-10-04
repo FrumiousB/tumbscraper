@@ -86,7 +86,8 @@ function setupTumblrOauth(app,consumer_key,consumer_secret,callback) {
     });
     
     app.get('/test', function (req, res) {
-        if (!tumblrAccessTokens.access_token || !tumblrAccessTokens.access_secret) {
+        if (!tumblrAccessTokens.access_token || 
+            !tumblrAccessTokens.access_secret) {
             res.redirect('/auth/request');
         }
     

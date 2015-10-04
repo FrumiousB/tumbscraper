@@ -6,45 +6,35 @@
 //
 var http = require('http');
 var path = require('path');
-var tumblr = require('tumblr.js');
-var socketio = require('socket.io');
 var express = require('express');
-var mongoose = require('mongoose');
 var async = require('async');
 
 var appmodel = require('./model.js');
 var logger = require('./multilog.js');
 logger.addSink(console.log);
-var oauthmodule = require('./oauthmodule.js');
 var tumblrSync = require('./tumblrsync.js');
 var dashboard = require('./dashboard.js');
 var controller = require('./controller.js');
-var database = require('./database.js');
+var store = require('./store.js');
+var appState = require('./appstate.js');
+var tumbhelper = require('./tumbhelper.js');
 
 var model = appmodel.model;
 
 // process all the info from the config file
 var config = require('../config/config.js');
 
-// tumblr information -- we don't need this in the model
-var tumblrConsumerKey = config.tumblr_consumer_key;
-var tumblrConsumerSecret = config.tumblr_consumer_secret;
-var tumblrOauthAccessToken = undefined;
-var tumblrOauthAccessTokenSecret = undefined;
-if (config.tumblr_use_cached_access_token === true) {
-  tumblrOauthAccessToken = config.tumblr_access_token;
-  tumblrOauthAccessTokenSecret = config.tumblr_access_secret;
-}
+var appConfig = undefined;
 
 model.fsSyncPicSavePath = config.savepath;
 
 if (process.env.IP)
-  model.IP = process.env.IP
+  model.IP = process.env.IP;
 else  
   model.IP = config.ip;
   
 if (process.env.PORT)
-  model.PORT = process.env.PORT
+  model.PORT = process.env.PORT;
 else
   model.PORT = config.port;
 
@@ -73,115 +63,47 @@ function listenWebServer(next){
   });
 }
 
-function setupDatabase(next){
-  logger.log('setupDatabase: starting');
-  database.init(model,next);
-  logger.log('setupDatabase: we\'re done here');
+function setupAppConfig(next){
+  logger.log('setupAppConfig: starting');
+  appState.init(model.IP, function finishAppStateInit (err) {
+    if (err) {
+      logger.log('setupAppConfig: error from init',err);
+      model.appStoreReadyState = model.APPSTATE_RUNSTATE_ERROR;
+    } else {
+      model.appStoreReadyState = model.APPSTATE_RUNSTATE_READY;
+      appState.getConfig(function finishAppStateGetConfig(error, results) {
+        if (error) {
+          var outererr = new Error(
+            'setupAppConfig: error from getconfig');
+          outererr.previous = error;
+          throw outererr;
+        } else {
+          appConfig = results;
+          logger.log('setupAppConfig: we\'re done here');
+          return next();
+        }
+      });
+    }
+  });
 }
 
-function setupDatabaseDefaults(next){
-    database.getConfig(function processResults(error, results) {
-      if (error) {
-        var outererr = new Error(
-          'setupDatabaseDefaults: error from getconfig');
-        outererr.previous = error;
-        throw outererr;
+function setupStore(next) {
+  logger.log('setupStore: starting');
+  store.init(model.IP, function finishStoreInit (err) {
+    if (err) {
+      logger.log('setupStore: error from init',err);
+      model.storeReadyState = model.STORE_RUNSTATE_ERROR;
+    } else {
+      model.storeReadyState = model.STORE_RUNSTATE_READY;
+      var PicType = store.getPicType();
+      if (!PicType) {
+        model.appStoreReadyState = model.STORE_RUNSTATE_ERROR;
+        logger.log('setupStore: getPicType failed');
       } else {
-        model.dbConfig = results;
-        return next();
-      }
-    });
-}
- 
-function setupOauth(next) {
-  logger.log('setupOauth: starting');
-  
-  // get cached credentials from database
-
-  tumblrOauthAccessToken = model.dbConfig.tumblrOauthAccessToken;
-  tumblrOauthAccessTokenSecret = model.dbConfig.tumblrOauthAccessTokenSecret;
-  setupOauthHelper(next);
-}
-
-function setupOauthHelper(next) {
-
-  if (!tumblrOauthAccessToken || !tumblrOauthAccessTokenSecret)
-  {
-    oauthmodule.tumblrOauthSetup(model.app, tumblrConsumerKey, 
-                                 tumblrConsumerSecret, 
-                                 function ProcessOauthSetup (accessKeys, err) {
-      if (err) {
-        logger.log('TumblrOAuthSetup: error getting tumblr oauth access:', err);
-        return;
-      }
-      else {
-        logger.log('TumblrOAuthSetup: Auth successful');
-//        logger.log('Access token =', accessKeys.access_token);
-//        logger.log('Access secret =', accessKeys.access_secret);
-        tumblrOauthAccessToken = accessKeys.access_token;
-        tumblrOauthAccessTokenSecret = accessKeys.access_secret;
-        model.dbConfig.tumblrOauthAccessToken = tumblrOauthAccessToken;
-        model.dbConfig.tumblrOauthAccessTokenSecret = 
-          tumblrOauthAccessTokenSecret;
-        logger.log('TumblrOAuthSetup: Saving new access keys in database');
-        database.setConfig(model.dbConfig, function checkResult(err, result) {
-          if (err) {
-            logger.log('TumblrOAuthSetup: ', err);
-            var outererr = new Error(
-              'TumblrOAuthSetup: failed to save new keys');
-            outererr.previous = err;
-            return next();
-          }
-        });
-        return next();
-      }
-    });
-  } else {
-  // if we're using cached tokens, we can see if they're still good
-    logger.log('TumblrOAuthSetup: Using cached token');
-  
-    // let's check to see if the tokens are actually good
-    var client = tumblr.createClient({
-      consumer_key: tumblrConsumerKey,
-      consumer_secret: tumblrConsumerSecret,
-      token: tumblrOauthAccessToken,
-      token_secret: tumblrOauthAccessTokenSecret
-    });
-    
-    client.userInfo(function (err, data) {
-      if (err) {
-        // if something failed, we can imagine the tokens were bad and try to 
-        // re-authenticate
-        logger.log(
-          'setupTumblrOauth: cached tokens didn\'t work, need to re-auth');
-        model.tumblrOauthAccessToken = tumblrOauthAccessToken = null;
-        model.tumblrOauthAccessTokenSecret = 
-          tumblrOauthAccessTokenSecret = null;
-        // call ourselves again with null tokens to do re-auth
-        setupOauthHelper(next);
-      } else { // if everything went fine, then we can be done
-        logger.log('setupTumblrOauth: cached tokens are good.');
+        model.PersistentPicRecord = PicType;
         next();
       }
-    });
-  }
-}
-
-// this function is not used anywhere; keepint it for inspiration
-function processPhotos() {
-  logger.log('processPhotos: starting');
-  logger.log('processPhotos: Populating ' + model.photos.length + ' dbRecords');
-  model.photos.forEach(function (inPic) {
-    var thisPic = new model.PicType ({
-      'date_liked' : new Date(),
-      'date_discovered' : new Date(),
-      'date_downloaded' : new Date(),
-      'url' : inPic.original_size.url
-    });
-    thisPic.save(function (err, data) {
-      if (err) return console.error('Save failed for ' + data.url + ':' + err);
-      else logger.log('Saved ' + thisPic.url);
-    });
+    }
   });
 }
 
@@ -193,18 +115,17 @@ function setupDashboard(next) {
 
 function setupTumblr(next) {
   logger.log('setupTumblr: starting');
- 
-  var arg0 = {
-    consumer_key : tumblrConsumerKey,
-    consumer_secret : tumblrConsumerSecret,
-    token : tumblrOauthAccessToken,
-    token_secret : tumblrOauthAccessTokenSecret
-  };
-
-  model.tumblrClient = tumblr.createClient(arg0);
-
-  logger.log('setupTumblr: we\'re done here');
-  next();
+  tumbhelper.init(config.tumblr_consumer_key, config.tumblr_consumer_secret,
+                  model.app, appState, function postInit(err, result) {
+                    if (err) {
+                      logger.log('setupTumblr: helper init failed');
+                      throw(err);
+                    } else {
+                      model.tumblrClient = result;
+                      logger.log('setupTumblr: we\'re done here');
+                      return next();
+                    }
+  });
 }
 
 function setupTumblrSync(next) {
@@ -220,7 +141,7 @@ function main(next) {
   model.appRunState = appmodel.APP_RUNSTATE_READY;
   model.notify({appRunState: appmodel.APP_RUNSTATE_READY});
   logger.log('scraper main - all set up, ready for action');
-//  controller.execute('tumbsyncstart');
+
   next();
 }
 
@@ -229,16 +150,15 @@ function main(next) {
 model.appRunState = appmodel.APP_RUNSTATE_INITIALIZING;
 
 var runTasks = {
-  setupDatabase: setupDatabase,
+  setupAppConfig: setupAppConfig,
+  setupStore: setupStore,
   setupWebServer: setupWebServer,
   setupDashboard: ['setupWebServer', setupDashboard],
   listenWebServer: ['setupWebServer', 
                     'setupDashboard', 
                     listenWebServer],
-  setupDatabaseDefaults: ['setupDatabase',setupDatabaseDefaults],
-  setupOauth: ['listenWebServer', 'setupDatabaseDefaults', setupOauth],
-  setupTumblr: ['setupOauth', setupTumblr],
-  setupTumblrSync: ['setupTumblr', 'setupDatabase', setupTumblrSync],
+  setupTumblr: ['listenWebServer', 'setupAppConfig', setupTumblr],
+  setupTumblrSync: ['setupTumblr', 'setupStore', setupTumblrSync],
   main: ['setupTumblrSync','setupDashboard', main]
 };
 

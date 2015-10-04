@@ -11,6 +11,12 @@ exports.TUMBLR_SYNC_RUNSTATE_STOPPED = 'stopped';
 exports.TUMBLR_SYNC_RUNSTATE_STOPPING = 'stopping'
 exports.TUMBLR_SYNC_RUNSTATE_ERROR = 'error';
 
+exports.APPSTATE_RUNSTATE_READY = 'ready';
+exports.APPSTATE_RUNSTATE_ERROR = 'error';
+
+exports.STORE_RUNSTATE_READY = 'ready';
+exports.STORE_RUNSTATE_ERROR = 'error';
+
 exports.APP_RUNSTATE_READY = 'ready';
 exports.APP_RUNSTATE_INITIALIZING = 'initializing'
 
@@ -27,8 +33,10 @@ exports.model = {
   
   notify : Object,
   
-  dbReadyState: Number,
-  DbPicRecord: Object,     // the mongoose type for saving pic records
+  appStoreReadyState: String,
+  storeReadyState: String,
+  
+  PersistentPicRecord: Object,     // the mongoose type for saving pic records
 
   fsSyncRunState: exports.FS_SYNC_RUNSTATE_STOPPED,
   fsSyncPicSavePath: String,

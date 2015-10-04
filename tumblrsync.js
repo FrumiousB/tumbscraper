@@ -28,9 +28,9 @@ function init(m, notifier, client) {
     workq = async.queue(doPostsBatch,1);
 }
 
-function start() {
-    logger.log('tumblrSyncStart command');
-    
+
+function validateStartingState () {
+  
     if (initialized != true) {
       var err = new Error('tumblrSyncStart: not initialized:');
         throw err;
@@ -38,21 +38,55 @@ function start() {
     
     if (model.tumblrSyncRunState === appmodel.TUMBLR_SYNC_RUNSTATE_ERROR) {
         logger.log('tumblrSyncStart: can\'t start from error state');
-        return;
+        return false;
     }
     
     if (model.tumblrSyncRunState === appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING) {
         logger.log('tumblrSyncStart: already running');
-        return;
+        return false;
     }
 
     if (model.tumblrSyncRunState === appmodel.TUMBLR_SYNC_RUNSTATE_STOPPING) {
         logger.log('tumblrSyncStart: can\'t start when stopping');
-        return;
+        return false;
     }
+    
+    // otherwise
+    return true;
+    
+}
 
-    // assert that the queue is currently not running.  if it is, we're in a
-    // bad place
+function start() {
+    logger.log('tumblrSyncStart command');
+    // if we're not in the right state 
+    if (!validateStartingState()) {
+      return;
+    }
+    
+    // TODO: we should assert that the queue is currently not running.  if it 
+    // is, we're in a bad place
+    
+    // mark our state as running
+    model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING;
+    notify({'tumblrSyncRunState' : appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING});
+    model.tumblrPostsSoFar = postsSoFar = 0;
+    
+    // we should drop the pics collection and reset the watermark
+    
+    workq.push({before : 0});
+    
+    logger.log('workq tasks =',workq.tasks);
+}
+
+function resume() {
+    logger.log('tumblrSyncResume command');
+    // if we're not in the right state 
+    if (!validateStartingState()) {
+      return;
+    }
+    
+    // TODO: we should assert that the queue is currently not running.  if it 
+    // is, we're in a bad place
     
     // mark our state as running
     model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING;
@@ -74,7 +108,7 @@ function stop(){
         return;
     }
 
-    // mark our state as stopping
+    // mark our state as stopping -- the batch worker will eventually notice
     model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_STOPPING;
     notify({'tumblrSyncRunState' : appmodel.TUMBLR_SYNC_RUNSTATE_STOPPING});
 }
@@ -212,6 +246,23 @@ function photosFromPosts(posts)
   
   return localphotos;
 }
-      
+
+// this function is not used anywhere; keepint it for inspiration
+function processPhotos() {
+  logger.log('processPhotos: starting');
+  logger.log('processPhotos: Populating ' + model.photos.length + ' dbRecords');
+  model.photos.forEach(function (inPic) {
+    var thisPic = new model.PicType ({
+      'date_liked' : new Date(),
+      'date_discovered' : new Date(),
+      'date_downloaded' : new Date(),
+      'url' : inPic.original_size.url
+    });
+    thisPic.save(function (err, data) {
+      if (err) return console.error('Save failed for ' + data.url + ':' + err);
+      else logger.log('Saved ' + thisPic.url);
+    });
+  });
+}
       
       
