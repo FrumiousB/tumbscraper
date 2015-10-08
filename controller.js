@@ -50,10 +50,16 @@ function execute (command) {
             // code
             break;
             
-        case 'tumbsyncstart':
+        case 'tumbsyncreset':
             // code
-            logger.log('controller execute: tumbsyncstart');
-            tumblrsync.start();
+            logger.log('controller execute: tumbsyncreset');
+            tumblrsync.reset();
+            break;
+            
+        case 'tumbsyncgo':
+            // code
+            logger.log('controller execute: tumbsyncgo');
+            tumblrsync.go();
             break;
             
         case 'tumbsyncstop':

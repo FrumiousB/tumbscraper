@@ -4,7 +4,6 @@
    call init, and if/once init succeeds you can call
    
    getClient or client to get the tumblr client
-   
 */
 
 var oauthmodule = require('./oauthmodule.js');
@@ -13,19 +12,20 @@ var logger = require('./multilog.js');
 
 module.exports = {
     init: init,
-    client: getClient,
+    client: tumblrClient,
     getClient: getClient
 };
 
+// these four keys are what you need to log into tumblr
 var tumblrConsumerKey = undefined;
 var tumblrConsumerSecret = undefined;
 var tumblrOauthAccessToken = undefined;
 var tumblrOauthAccessTokenSecret = undefined;
 
-var appConfig = undefined;
-var appConfigFactory = undefined;
+var appConfig = undefined;         // appstate config: this will be injected
+var appConfigFactory = undefined;  // appstate config: this will be injected
 
-var tumblrClient = undefined;
+var tumblrClient = undefined;  // this will become the tumblr.js client
 
 function init (ckey, csecret, app, appcf, callback) {
 
@@ -157,7 +157,7 @@ function setupOauthHelper(app, callback) {
                  
 function getClient() {
     if (!tumblrClient) {
-        logger.log('tumbhelper: getclient caleld, but no client');
+        logger.log('tumbhelper: getclient calld, but no client');
         return null;
     } else {
         return tumblrClient;

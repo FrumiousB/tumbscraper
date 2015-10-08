@@ -1,29 +1,37 @@
 // Process likes by batch until done
-var tumblr = require('tumblr.js');
+
 var async = require('async');
-var mongoose = require('mongoose');
 var appmodel = require('./model.js');
 var logger = require('./multilog.js');
 
-var POSTSLIMIT = 1000;
-var postsSoFar = 0;
+var POSTSLIMIT = 100;
 var initialized = false;
-var tumblrClient = undefined;
-var model = undefined;
-var notify = undefined;
+var tumblrClient = undefined;  // injected
+var notify = undefined;        // injected
+var appConfig = undefined;     // injected
+var model = undefined;         // injected
+var PicRecord = undefined;     // injected
+
+var tumblrFreshestPostSeen = undefined;
+var tumblrTempOldestRecorded = undefined;
 
 module.exports = {
     init: init,
-    start: start,
+    reset: reset,
+    go: go,
     stop: stop
 };
 
 var workq = undefined;
 
-function init(m, notifier, client) {
-    tumblrClient = client;
+function init(m, appcfg, notifier, client, prt) {
+    
     model = m;
+    appConfig = appcfg;
     notify = notifier;
+    tumblrClient = client;
+    PicRecord = prt;
+
     initialized = true;
     workq = async.queue(doPostsBatch,1);
 }
@@ -41,7 +49,11 @@ function validateStartingState () {
         return false;
     }
     
-    if (model.tumblrSyncRunState === appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING) {
+    if ((model.tumblrSyncRunState === 
+         appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING_FIRST) || 
+        (model.tumblrSyncRunState === 
+         appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING_MINOR)) {
+           
         logger.log('tumblrSyncStart: already running');
         return false;
     }
@@ -56,44 +68,106 @@ function validateStartingState () {
     
 }
 
-function start() {
-    logger.log('tumblrSyncStart command');
-    // if we're not in the right state 
-    if (!validateStartingState()) {
-      return;
+function reset() {
+  
+  if (initialized != true) {
+    var err = new Error('tumblrsync:reset: not initialized:');
+      throw err;
+  }
+
+  appConfig.tumblrFreshestPostRecorded = 0;
+  appConfig.tumblrOldestPostRecorded = Infinity;
+  appConfig.tumblrBedrockPost = undefined;
+  
+  appConfig.save(function checkSaveResults(error) {
+    if (err) {
+      logger.log('tumblrsync:reset:failed to save updated state');
     }
-    
-    // TODO: we should assert that the queue is currently not running.  if it 
-    // is, we're in a bad place
-    
-    // mark our state as running
-    model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING;
-    notify({'tumblrSyncRunState' : appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING});
-    model.tumblrPostsSoFar = postsSoFar = 0;
-    
-    // we should drop the pics collection and reset the watermark
-    
-    workq.push({before : 0});
-    
-    logger.log('workq tasks =',workq.tasks);
+  });
+  
+  model.tumblrFreshestPostRecorded = appConfig.tumblrFreshestPostRecorded;
+  model.tumblrBedrockPost = appConfig.tumblrBedrockPost;
+  model.tumblrOldestPostRecorded = appConfig.tumblrOldestPostRecorded;
+  model.tumblrPostsSoFar = 0;
+
+  notify({'tumblrFreshestPostRecorded' : 
+             new Date(model.tumblrFreshestPostRecorded*1000),
+          'tumblrOldestPostRecorded' : 
+             new Date(model.tumblrOldestPostRecorded*1000),
+          'tumblrPostsSoFar' : model.tumblrPostsSoFar
+         });
+}    
+
+function go() {
+  
+  logger.log('tumblrsync:go:starting');    
+  
+  if (initialized != true) {
+    var err = new Error('tumblrsync:go: not initialized:');
+      throw err;
+  }
+
+  if (!validateStartingState()) {
+    return;
+  }
+  
+  model.tumblrFreshestPostRecorded = 
+    new Date(appConfig.tumblrFreshestPostRecorded*1000);
+  notify({'tumblrFreshestPostRecorded' : model.tumblrFreshestPostRecorded});
+  model.tumblrOldestPostRecorded = 
+    new Date(appConfig.tumblrOldestPostRecorded*1000);
+  notify({'tumblrOldestPostRecorded' : model.tumblrOldestPostRecorded});
+ 
+  // find freshest post seen so we know when we're done
+  findTimeStampOfFreshestPost(function processFreshestTimestamp(err, result) {
+    if (err) {
+      logger.log('TumbSyncBatchWorker: error from TimeStampOfLatestPost:',err);
+      model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_ERROR;
+      notify({'tumblrSyncRunstate' : model.tumblrSyncRunState});
+      return;
+    } else { 
+      tumblrFreshestPostSeen = result;
+      model.tumblrFreshestPostSeen = new Date(result*1000);
+      notify({'tumblrFreshestPostSeen' : model.tumblrFreshestPostSeen});
+      
+      // everything is set up, we can go
+//      workq.push({after: appConfig.tumblrOldestPostRecorded});
+
+      // if we haven't ever hit bottom, sync from our oldest recorded post 
+      // to what the service thinks is the oldest post: first sync
+      if (appConfig.tumblrBedrockPost === undefined) {
+        logger.log('tumblrsync:go:starting first sync');
+        doFirstSync();
+      } else if (tumblrFreshestPostSeen != 
+                  appConfig.tumblrFreshestPostRecorded) {
+        logger.log('tumblrsync:go:starting minor sync');
+        doMinorSync();
+      } else {
+        logger.log('tumblrsync:go:fully synced already');
+      }
+      logger.log('tumblrsync:go:workq tasks =',workq.tasks);
+      logger.log('tumblrsync:go:started');
+    }
+  });
 }
 
-function resume() {
-    logger.log('tumblrSyncResume command');
-    // if we're not in the right state 
-    if (!validateStartingState()) {
-      return;
-    }
-    
-    // TODO: we should assert that the queue is currently not running.  if it 
-    // is, we're in a bad place
-    
-    // mark our state as running
-    model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING;
-    notify({'tumblrSyncRunState' : appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING});
-    model.tumblrPostsSoFar = postsSoFar = 0;
-    workq.push({before : 0});
-    logger.log('workq tasks =',workq.tasks);
+function doMinorSync ()
+{
+  model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING_MINOR;
+  notify({'tumblrSyncRunState' : model.tumblrSyncRunState});
+  tumblrTempOldestRecorded = tumblrFreshestPostSeen + 1;
+  workq.push({ phase: 'minorSync'});
+}
+
+function doFirstSync ()
+{
+  model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING_FIRST;
+  notify({'tumblrSyncRunState' : model.tumblrSyncRunState});
+  appConfig.tumblrOldestPostRecorded = tumblrFreshestPostSeen + 1;
+  appConfig.save(function(err) {
+    if (err) logger.log('tumbsync:dofirstsync:config save failed');
+  });
+  workq.push({ phase: 'firstSync'});
 }
 
 function stop(){
@@ -118,7 +192,7 @@ function findTimeStampOfFreshestPost(callback) {
   var options = {
       offset : 0,
       limit : 1
-  }
+  };
   
   tumblrClient.likes(options, function(err,response) {
     if (err) {
@@ -126,88 +200,185 @@ function findTimeStampOfFreshestPost(callback) {
       logger.log(err);
       callback(err,null);
     } else { // otherwise we got a post
+      
+      model.tumblrTotalLikes = response.liked_count;
+      notify({'tumblrTotalLikes': model.tumblrTotalLikes});
+
       var timestamp = response.liked_posts[0].liked_timestamp;
       var tdate = new Date(timestamp*1000);
       logger.log('findTimeStampOfFreshestPost: timestamp=',tdate.toUTCString());
+      // model.tumblrFreshestPostSeen = tdate.toUTCString();
+      
+      model.tumblrFreshestPostSeen = tdate;
+      notify({'tumblrFreshestPostSeen': model.tumblrFreshestPostSeen});
       callback(null,timestamp);
     }
   });
 }
 
+
 function doPostsBatch(batch, next) {
-  
-  var before = batch.before;
-  var beforetime = new Date(before*1000);
-  model.tumblrCurrentTime = beforetime;
-  notify({'tumblrCurrentTime': model.tumblrCurrentTime});
-  logger.log('TumbSyncBatchWorker: starting batch @', beforetime.toUTCString() , ', ', 
-              postsSoFar, ' posts fetched');
+
   
   if (model.tumblrSyncRunState === appmodel.TUMBLR_SYNC_RUNSTATE_STOPPING) {
-    logger.log('TumbSyncBatchWorker: Runstate == stopping. Worker stopping.');
+    logger.log('tumbsync:dopostsbatch:stopping');
     model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_STOPPED;
-    notify({'tumblrSyncRunState' : appmodel.TUMBLR_SYNC_RUNSTATE_STOPPED});
+    notify({'tumblrSyncRunState' : model.tumblrSyncRunState});
     // still need to tell work queue manager (async) that this worker is done
     // with the task - that's why we return next() instead of just returning.
     // this means we can restart later
+    
+    // since we didn't do anything, no need to save state
+    // since we didn't push a batch on the queue, we can just return
+    // and the queue will be empty
+    
     return next();
   }
 
-  if (before === 0) { // if we're starting at the beginning
-    findTimeStampOfFreshestPost(function processFreshestTimestamp (err, response) {
-        if (err) {
-          logger.log('TumbSyncBatchWorker: error from TimeStampOfLatestPost:',err)
-          return next();
-        } else { 
-          before = response + 1; // we want the freshest post and everything 
-        }                      // before, so we anchor just after
-    });
+  // so now we get a batch of all posts, based on what phase we are in 
+
+  var options = undefined;
+  switch (batch.phase) {
+    case 'firstSync':
+      options = { 'before' : appConfig.tumblrOldestPostRecorded };
+      break;
+    case 'minorSync':
+      logger.log('tumbsync:dopostpbatch:detected minor sync');
+      options = { 'before' : tumblrTempOldestRecorded };
+      logger.log('options = ',options);
+      break;
+    default:
+      var err = new Error('tumbsync:dopostsbatch:bad phase:',batch.phase);
+      throw err;
   }
 
-// by now, we either have a valid before because it was passed in, or because 
-// we got the timestamp of the freshest post + 1 second
-// so we get a batch of all posts before that timestamp
-
+  logger.log('tumbsync:dopostsbatch:',batch.phase,' getting ', options);
+  
   var posts = undefined;
-  var options = { 'before' : before };
+
   tumblrClient.likes(options, function(err,response) {
     if (err) {
-      logger.log('Posts Batch Worker: Got an error');
-      logger.log(err);
+      logger.log('tumbsync:dopostsbatch:error from tumblr:',err);
+      model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_ERROR;
+      notify({'tumblrSyncRunState' : model.tumblrSyncRunState});
       return next();
     } else {
       posts = response['liked_posts'];
       if (posts.length == 0) {
         logger.log('Posts Batch Worker: No earlier tumblr posts');
-        return next();
-      } else {  // otherwise we are good, and we can extract photos
+        
+        // this means we hit bedrock
+        
+        appConfig.tumblrBedrockPost = options.before;
+        
+        // save this glorious state
+        appConfig.save(function(err) {
+          if (err) {
+            logger.log('tubmlrsync:dopostbatch:error saving bedrock');
+          }
+        });
+        
+        // update clients
+        model.tumblrBedrockPost = new Date(appConfig.tumblrBedrockPost*1000);
+        notify({'tumblrBedrockPost' : model.tumblrBedrockPost});
+        
+        // if this was a first sync (which it should be)
+        // check to see if we need a minor sync
+        logger.log(
+          'tumblrsync:dopostsbatch:checking to see if there is more work');
+        if (batch.phase === 'firstSync') {
+          if (tumblrFreshestPostSeen != 
+                  appConfig.tumblrFreshestPostRecorded) {
+            logger.log('tumblrsync:dopostsbatch:starting minor sync');
+            doMinorSync();
+          } else {
+            logger.log('tumblrsync:dopostsbatch:fully synced already');
+          }
+        } else {
+          logger.log('tumblrsync:dopostsbatch: hit bedrock on minor sync?');
+          model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_STOPPED;
+          notify({'tumblrSyncRunState' : model.tumblrSyncRunState});
+        }
+        
+        logger.log('tumblrsync:dopostsbatch:done');
+        return(next);
+      } else {  // otherwise we got some posts, and we can extract photos
       
+        model.tumblrPostsSoFar += posts.length;
+        notify({'tumblrPostsSoFar': model.tumblrPostsSoFar});
+  
         // get a flat array of all the photos from every post 
         var photos = photosFromPosts(posts);
-        // and figure out which post is earliest
-        var earliest = earliestFromPosts(posts);
-        
-        // now go through and do work to (eventually) log them in the database
-        photos.forEach(function (thisphoto) {
-        //            thisphoto.original_size.url);
-        });
-    
-        // Now we set up parameter block for the next batch
-        var newbatch = { 
-          'before': earliest
-        };
-        
-//        logger.log('posts.length',posts.length);
+        // and figure out which post is earliest and latest
+        var oldest = oldestFromPosts(posts);
+        var freshest = freshestFromPosts(posts);
 
-        // Here we're keeping track of whether we went past our self-imposed
-        // limit of posts.  In production, there won't be a limit
-        postsSoFar += posts.length;
-        model.tumblrPostsSoFar = postsSoFar;
-        notify({'tumblrPostsSoFar': postsSoFar});
-        if (postsSoFar < POSTSLIMIT) {
-          workq.push(newbatch);
-        } else {
-          logger.log('Posts Batch Worker: Hit max posts');
+        // now go through and log them in the database asynchronously
+        photos.forEach(function (thisphoto) {
+                    processPhoto(thisphoto);
+        });
+        
+        if (batch.phase === 'firstSync') {
+          // move the low watermark down further
+          if (oldest >= appConfig.tumblrOldestPostRecorded) {
+            // every batch we get should have an earliest datestamp earlier
+            // than the low watermark
+            logger.log('tumbsync:dopostsbatch:first sync but window stuck');
+          }
+          
+          if (freshest > appConfig.tumblrFreshestPostRecorded) {
+            appConfig.tumblrFreshestPostRecorded = freshest;
+          }
+          appConfig.tumblrOldestPostRecorded = oldest;
+
+          appConfig.save(function checkSaveResults(error) {
+            if (err) {
+              logger.log('tumblrsync:doPostsBatch:failed to save updated state');
+            }
+          });
+          // we can keep going
+          pushCheckingLimit(batch);
+
+          model.tumblrOldestPostRecorded = 
+            new Date(appConfig.tumblrOldestPostRecorded*1000);
+          model.tumblrFreshestPostRecorded = 
+            new Date(appConfig.tumblrFreshestPostRecorded*1000);
+
+          notify({'tumblrOldestPostRecorded' : model.tumblrOldestPostRecorded,
+                  'tumblrFreshestPostRecorded' :
+                     model.tumblrFreshestPostRecorded});
+
+        } else {  // if minor sync insteand
+          if (oldest < tumblrTempOldestRecorded) {
+            // move down our temp cursor
+            tumblrTempOldestRecorded = oldest;
+            
+            if (tumblrTempOldestRecorded <= // if we hit recorded posts
+                  appConfig.tumblrFreshestPostRecorded) {
+              // then save state that we are now up to date
+              logger.log('tumblrsync:dopostsbatch:minor sync hit bottom');
+              appConfig.tumblrFreshestPostRecorded = tumblrFreshestPostSeen;
+              appConfig.save(function checkSaveResults(error) {
+                if (err) {
+                  logger.log('tumblrsync:doPostsBatch:failed to save updated state');
+                }
+              });
+
+              // tell observers we are now up to date & mark our state
+              // as stopped
+              model.tumblrFreshestPostRecorded = tumblrFreshestPostSeen;
+              model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_STOPPED;
+              notify({'tumblrSyncRunState' : model.tumblrSyncRunState},
+                     {'tumblrFreshestPostRecorded' : tumblrFreshestPostSeen});
+            } else {
+              // if we haven't hit bottom, add another work item to 
+              // the work queue
+              pushCheckingLimit(batch);
+            }
+          }
+          // tell observers how far down we got in this batch
+          model.tumblrMinorSyncOldest = new Date(tumblrTempOldestRecorded*1000);
+          notify({'tumblrMinorSyncOldest' : model.tumblrMinorSyncOldest});
         }
         
         // We wait a bit in order to be polite, then call next() which is 
@@ -222,11 +393,36 @@ function doPostsBatch(batch, next) {
   });
 }
 
-function earliestFromPosts(posts)
+function pushCheckingLimit(batch) {
+  if (model.tumblrPostsSoFar >= POSTSLIMIT) {
+     logger.log('tumblrsync:dopostbatch:hit max posts');
+     model.tumblrSyncRunState = model.TUMBLR_SYNC_RUNSTATE_STOPPED;
+     notify({'tumblrSyncRunState' : model.tumblrSyncRunstate});
+     
+     // fakes out that we hit bottom
+     appConfig.tumblrBedrockPost = appConfig.tumblrOldestPostRecorded;
+     
+  } else {
+     workq.push(batch);
+  }
+}
+
+function oldestFromPosts(posts)
 {
   var winner = Infinity;
   posts.forEach(function (thispost) {
     if (thispost.liked_timestamp < winner) {
+      winner = thispost.liked_timestamp;
+    }
+  });
+  return winner;
+}
+
+function freshestFromPosts(posts)
+{
+  var winner = 0;
+  posts.forEach(function (thispost) {
+    if (thispost.liked_timestamp > winner) {
       winner = thispost.liked_timestamp;
     }
   });
@@ -239,6 +435,8 @@ function photosFromPosts(posts)
   posts.forEach(function (thispost) {
     if (thispost.photos != undefined) {
       thispost.photos.forEach(function (thisphoto) {
+        thisphoto.parentPost = thispost.id;
+        thisphoto.parentPostURL = thispost.post_url;
         localphotos.push(thisphoto);
       });
     }
@@ -247,22 +445,39 @@ function photosFromPosts(posts)
   return localphotos;
 }
 
-// this function is not used anywhere; keepint it for inspiration
-function processPhotos() {
-  logger.log('processPhotos: starting');
-  logger.log('processPhotos: Populating ' + model.photos.length + ' dbRecords');
-  model.photos.forEach(function (inPic) {
-    var thisPic = new model.PicType ({
-      'date_liked' : new Date(),
-      'date_discovered' : new Date(),
-      'date_downloaded' : new Date(),
-      'url' : inPic.original_size.url
-    });
-    thisPic.save(function (err, data) {
-      if (err) return console.error('Save failed for ' + data.url + ':' + err);
-      else logger.log('Saved ' + thisPic.url);
-    });
+// this function is not used anywhere; keeping it for inspiration
+function processPhoto(photo) {
+  
+  // find a record for this photo in the db
+  
+  PicRecord.find({url : photo.original_size.url}, 
+    function checkFindResults(err, result) {
+
+    if (err) {
+      logger.log('tumbsync:processphoto:pics->find failed');
+    } else {
+      if (result.length === 0) {// we don't have a record of this picture
+        // so let's save one
+        
+        var newrec = new PicRecord;
+        
+        newrec.url = photo.original_size.url;
+        newrec.parentPostId = photo.parentPost;
+        newrec.parentPostURL = photo.parentPostURL;
+        newrec.dateLiked = photo.dateLiked;
+        newrec.dateDiscovered = new Date();
+        
+        newrec.save(function checkSaveResults(err) {
+          if (err) logger.log('tumbsync:processphoto:pic save failed');
+//          else logger.log('tumbsync:processphoto:saved ',newrec.url);
+        });
+      } else {
+//        logger.log('tumbsync:processphoto:pic already in db');
+      }
+    }
   });
 }
+  
+ 
       
       

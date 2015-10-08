@@ -5,30 +5,27 @@
    setup the dashboard.
 */
 
-var path = require('path');
-var tumblr = require('tumblr.js');
 var socketio = require('socket.io');
-var express = require('express');
 var logger = require('./multilog.js');
 
 module.exports = {
     init: init,
     notify: notify,
     log: log
-}
+};
 
-var dboardModel = undefined;
-var controller = undefined;
+var dboardModel = undefined;//injected
+var controller = undefined; //injected
+var server = undefined;     //injected
 var sockets = [];
 
-function init (m,c) {
+function init (m,c,s) {
     if (typeof(m) != 'object') {
         var err = new Error(
             'dashboard init: bad parameter: should be model object:', m);
         throw err;
     } else {
-    dboardModel = m;
-    m.notify = notify;  // put this in the model so model-writers can update
+        dboardModel = m;
     }
     
     if (typeof(c) != 'object') {
@@ -36,10 +33,18 @@ function init (m,c) {
             'dashboard init: bad parameter: should be controller object:', c);
         throw err;
     } else {
-    controller = c;
+        controller = c;
+    }
+
+    if (typeof(s) != 'object') {
+        var err = new Error(
+            'dashboard init: bad parameter: should be server object:', s);
+        throw err;
+    } else {
+        server = s;
     }
     
-    var io = socketio.listen(dboardModel.server);
+    var io = socketio.listen(server);
     
     io.on('connection', function socketConnect (socket) {
       // keep a list of clients
@@ -56,22 +61,19 @@ function init (m,c) {
       // dispatch commands to controller  
       socket.on('command', processCommand);
       
-      // when asked, dump state
-      // socket.on('refresh', sendCurrentModel(socket));
-    
+      //when asked, dump state
+      socket.on('refresh', function socketRefresh(sock) {
+          sendCurrentModel(sock);
+      });
     });
   
     logger.log('setupDashboard: done: listening at', dboardModel.IP + ':' + dboardModel.PORT);
-};
+}
 
 function sendCurrentModel(socket) {
     var packet = {};
   
-    if(dboardModel.appRunState)
-        packet.appRunState = dboardModel.appRunState;
-        
-    if(dboardModel.tumblrSyncRunState)
-        packet.tumblrSyncRunState = dboardModel.tumblrSyncRunState;
+    packet = dboardModel;
         
     if (packet != {}) {
         socket.emit('update',packet);
@@ -90,7 +92,14 @@ function processCommand (cmd) {
 }
 
 function notify (data) {
-    dashboardBroadcast('update',data);
+    
+    if (data === null) {
+        sockets.forEach(function (socket) {
+            sendCurrentModel(socket);
+        });
+    } else {
+        dashboardBroadcast('update',data);
+    }
 }
 
 function log(message) {

@@ -45,16 +45,16 @@ function init (ip, callback) {
 
   // db = mongoose.connection;
   db.on('error', console.error.bind(console, 
-                                    'setupDatabase: db connection error'));
+                                    'store:init: db connection error'));
   db.once('open', function (cb) {
-    logger.log('storeInit: connected successfully, database open');
+    logger.log('store:init: connected successfully, database open');
     callback(null, null);
   });
 }
 
 function getPicType () {
     if (!PicType) {
-        logger.log('getPicType: PicType not initialized');
+        logger.log('store:getPicType: PicType not initialized');
         return null;
     } else {
         return PicType;

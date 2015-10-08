@@ -20,6 +20,7 @@ var appState = require('./appstate.js');
 var tumbhelper = require('./tumbhelper.js');
 
 var model = appmodel.model;
+var wiring = appmodel.wiring;
 
 // process all the info from the config file
 var config = require('../config/config.js');
@@ -29,14 +30,14 @@ var appConfig = undefined;
 model.fsSyncPicSavePath = config.savepath;
 
 if (process.env.IP)
-  model.IP = process.env.IP;
+  wiring.IP = process.env.IP;
 else  
-  model.IP = config.ip;
+  wiring.IP = config.ip;
   
 if (process.env.PORT)
-  model.PORT = process.env.PORT;
+  wiring.PORT = process.env.PORT;
 else
-  model.PORT = config.port;
+  wiring.PORT = config.port;
 
 var setupWebServer = function(next) {
   logger.log('setupWebServer: starting');
@@ -46,9 +47,9 @@ var setupWebServer = function(next) {
   app.use(express.methodOverride());
   app.use(express.errorHandler());
 
-  model.server = http.createServer(app);
+  wiring.server = http.createServer(app);
   app.use(express.static(path.resolve(__dirname, 'client')));
-  model.app = app;
+  wiring.app = app;
 
   logger.log('setupWebServer: we\'re done here');
   next();
@@ -56,29 +57,30 @@ var setupWebServer = function(next) {
 
 function listenWebServer(next){
   logger.log('listenWebServer: starting');
-  var listener = model.server.listen(model.PORT, model.IP, function () {
+  var listener = wiring.server.listen(wiring.PORT, wiring.IP, function () {
       logger.log('listenWebServer:',listener.address().address,':',
         listener.address().port);
+      logger.log('listenWebServer: we\'re done here');
       next();
   });
 }
 
 function setupAppConfig(next){
   logger.log('setupAppConfig: starting');
-  appState.init(model.IP, function finishAppStateInit (err) {
+  appState.init(wiring.IP, function finishAppStateInit (err) {
     if (err) {
       logger.log('setupAppConfig: error from init',err);
-      model.appStoreReadyState = model.APPSTATE_RUNSTATE_ERROR;
+      model.appStateReadyState = model.APPSTATE_RUNSTATE_ERROR;
     } else {
-      model.appStoreReadyState = model.APPSTATE_RUNSTATE_READY;
-      appState.getConfig(function finishAppStateGetConfig(error, results) {
+      model.appStateReadyState = model.APPSTATE_RUNSTATE_READY;
+      appState.getConfig(function finishAppStateGetConfig(error, result) {
         if (error) {
           var outererr = new Error(
             'setupAppConfig: error from getconfig');
           outererr.previous = error;
           throw outererr;
         } else {
-          appConfig = results;
+          appConfig = result;
           logger.log('setupAppConfig: we\'re done here');
           return next();
         }
@@ -89,7 +91,7 @@ function setupAppConfig(next){
 
 function setupStore(next) {
   logger.log('setupStore: starting');
-  store.init(model.IP, function finishStoreInit (err) {
+  store.init(wiring.IP, function finishStoreInit (err) {
     if (err) {
       logger.log('setupStore: error from init',err);
       model.storeReadyState = model.STORE_RUNSTATE_ERROR;
@@ -97,10 +99,11 @@ function setupStore(next) {
       model.storeReadyState = model.STORE_RUNSTATE_READY;
       var PicType = store.getPicType();
       if (!PicType) {
-        model.appStoreReadyState = model.STORE_RUNSTATE_ERROR;
+        model.storeReadyState = model.STORE_RUNSTATE_ERROR;
         logger.log('setupStore: getPicType failed');
       } else {
-        model.PersistentPicRecord = PicType;
+        wiring.PersistentPicRecord = PicType;
+        logger.log('setupStore: we\'re done here');
         next();
       }
     }
@@ -108,20 +111,23 @@ function setupStore(next) {
 }
 
 function setupDashboard(next) {
-  dashboard.init(model,controller);
+  logger.log('setupDashboard: starting');
+  dashboard.init(model,controller,wiring.server);
+  wiring.notify = dashboard.notify;
   logger.addSink(dashboard.log);
+  logger.log('setupDashboard: we\'re done here');
   next();
 }
 
 function setupTumblr(next) {
   logger.log('setupTumblr: starting');
   tumbhelper.init(config.tumblr_consumer_key, config.tumblr_consumer_secret,
-                  model.app, appState, function postInit(err, result) {
+                  wiring.app, appState, function postInit(err, result) {
                     if (err) {
                       logger.log('setupTumblr: helper init failed');
                       throw(err);
                     } else {
-                      model.tumblrClient = result;
+                      wiring.tumblrClient = result;
                       logger.log('setupTumblr: we\'re done here');
                       return next();
                     }
@@ -130,7 +136,8 @@ function setupTumblr(next) {
 
 function setupTumblrSync(next) {
   logger.log('setupTumbSync: starting');
-  tumblrSync.init(model, dashboard.notify, model.tumblrClient);
+  tumblrSync.init(model, appConfig, dashboard.notify, wiring.tumblrClient,
+                  wiring.PersistentPicRecord);
   logger.log('setupTumbSync: we\'re done here');
   next();
 }
@@ -139,8 +146,27 @@ function setupTumblrSync(next) {
 function main(next) {
   controller.init(model);
   model.appRunState = appmodel.APP_RUNSTATE_READY;
-  model.notify({appRunState: appmodel.APP_RUNSTATE_READY});
+  wiring.notify({appRunState: appmodel.APP_RUNSTATE_READY});
+  wiring.notify(null);  // update dashboard with all info
   logger.log('scraper main - all set up, ready for action');
+
+  async.forever(function(iterate) {
+      wiring.PersistentPicRecord.count(function handlePicsCount(err,result) {
+      if (err) logger.log('tumbsync:dopostsbatch:failed to get pic count:',
+          err);
+      else {
+          if (model.picEntryCount != result) {
+            model.picEntryCount = result;
+            wiring.notify({'picEntryCount' : model.picEntryCount});
+          }
+      }
+    });
+    
+    setTimeout(function ContinueAfterWait() {
+          return iterate();
+        },2000);
+    
+  });
 
   next();
 }
@@ -153,10 +179,9 @@ var runTasks = {
   setupAppConfig: setupAppConfig,
   setupStore: setupStore,
   setupWebServer: setupWebServer,
-  setupDashboard: ['setupWebServer', setupDashboard],
   listenWebServer: ['setupWebServer', 
-                    'setupDashboard', 
                     listenWebServer],
+  setupDashboard: ['listenWebServer', setupDashboard],
   setupTumblr: ['listenWebServer', 'setupAppConfig', setupTumblr],
   setupTumblrSync: ['setupTumblr', 'setupStore', setupTumblrSync],
   main: ['setupTumblrSync','setupDashboard', main]

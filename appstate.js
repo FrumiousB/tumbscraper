@@ -9,12 +9,16 @@ var DbConfig = undefined;
 
 var configSchemaInitializer = {
     locator: String,
+    
     tumblrOauthAccessToken: String,
     tumblrOauthAccessTokenSecret: String,
-    tumblrFreshestPost : Number,
-    tumblrOldestPost: Number,
+    
+    tumblrFreshestPostRecorded : Number,
+    tumblrOldestPostRecorded: Number,
+    tumblrBedrockPost: Number, // stamp of oldest post service knows of
+    
     fsFreshestPic: Date,
-    fsOldestPic: Date,
+    fsOldestPic: Date
 };
 
 module.exports = {

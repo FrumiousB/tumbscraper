@@ -14,14 +14,20 @@
       function ScrapeController($scope) {
         var socket = io.connect();
 
-        $scope.dbRunState = '';
-        $scope.appRunState = '';
-        $scope.tumblrSyncRunState  = '';
-        $scope.fsSyncRunState = '';
-        $scope.dbRunState = '';
+        $scope.appStateReadyState= undefined;
+        $scope.storeReadyState = undefined;
+        $scope.appRunState = undefined;
+        $scope.tumblrSyncRunState = undefined;
+        $scope.tumblrPostsSoFar = undefined;
+        $scope.tumblrOldestPostRecorded = undefined;
+        $scope.tumblrFreshestPostRecorded = undefined;
+        $scope.tumblrFreshestPostSeen = undefined;
+        $scope.tumblrTotalLikes = undefined;
+        $scope.picEntryCount = undefined;
+        $scope.picFileCount = undefined;
+
+
         $scope.error = 'no error';
-        $scope.tumblrPostsSoFar = 0;
-        $scope.tumblrCurrentTime = new Date();
         $scope.logBuffer = [];
 
         socket.on('connect', function () {
@@ -31,6 +37,32 @@
           for (var property in object) {
             $scope.$apply(function updateCommand() {
               switch(property) {
+  
+  
+                case 'appStateReadyState':
+                case 'storeReadyState':
+                case 'appRunState':
+                case 'tumblrSyncRunState':
+                case 'tumblrPostsSoFar':
+                case 'tumblrOldestPostRecorded':
+                case 'tumblrFreshestPostRecorded':
+                case 'tumblrFreshestPostSeen':
+                case 'tumblrBedrockPost':
+                case 'tumblrTotalLikes':
+                case 'tumblrMinorSyncOldest':
+                case 'picEntryCount':
+                case 'picFileCount':
+                  $scope[property] = object[property];
+                  
+                  if (Date === typeof object[property]) {
+                    $scope[property] = object[property].toUTCString();
+                  }
+                  
+                  break;
+                
+/*                case 'appStateReadyState':
+                  $scope.appStateReadyState = object[property];
+                  break;
                 
                 case 'tumblrPostsSoFar':
                   $scope.tumblrPostsSoFar = object[property];
@@ -45,9 +77,9 @@
                   break;
               
                 case 'appRunState':
-                  $scope.appRunState = object[property];
+                  $scope.appReadyState = object[property];
                   break;
-                
+*/                
                 default:
                   $scope.error = 'bad command from server:'+ property + 
                                  ':' + object[property];
@@ -64,8 +96,12 @@
           });
         });
 
-        $scope.startTumblrSync = function() {
-          socket.emit('command','tumbsyncstart');
+        $scope.resetTumblrSync = function() {
+          socket.emit('command','tumbsyncreset');
+        };
+
+        $scope.goTumblrSync = function() {
+          socket.emit('command','tumbsyncgo');
         };
         
         $scope.stopTumblrSync = function() {
@@ -102,15 +138,23 @@
           <ul class="nav nav-list well">
             <li class="nav-header">Tumblr Sync Information</li>
             <small>
-              <li>Total posts fetched = {{tumblrPostsSoFar}}</li>
-              <li>Datestamp reached = {{tumblrCurrentTime}}</li>
+              <li>Total likes = {{tumblrTotalLikes}}</li> 
+              <li>Posts fetched = {{tumblrPostsSoFar}}</li>
+              <li>Oldest Post Recorded = {{tumblrOldestPostRecorded}}</li>
+              <li>Freshest Post Recorded = {{tumblrFreshestPostRecorded}}</li>
+              <li>Freshest Post Seen = {{tumblrFreshestPostSeen}}</li>
+              <li>Oldest Minor Post Seen = {{tumblrMinorSyncOldest}}</li>
+              <li>Pix in db = {{picEntryCount}}</li>
             </small>
           </ul>
         </div>
         
         <ul class="span8">
-          <form ng-submit="startTumblrSync()">
-             <input type="submit" class="span2 btn btn-primary" value="Start TumbSync" ng-disabled="false">
+          <form ng-submit="resetTumblrSync()">
+             <input type="submit" class="span2 btn btn-primary" value="Reset TumbSync" ng-disabled="false">
+          </form>
+          <form ng-submit="goTumblrSync()">
+             <input type="submit" class="span2 btn btn-primary" value="Go TumbSync" ng-disabled="false">
           </form>
           <form ng-submit="stopTumblrSync()">
             <input type="submit" class="span2 btn btn-primary" value="Stop TumbSync" ng-disabled="false">
