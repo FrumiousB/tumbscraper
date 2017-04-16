@@ -151,6 +151,7 @@ function main(next) {
   logger.log('scraper main - all set up, ready for action');
 
   async.forever(function(iterate) {
+      logger.log('tumbsync: main loop heartbeat');
       wiring.PersistentPicRecord.count(function handlePicsCount(err,result) {
       if (err) logger.log('tumbsync:dopostsbatch:failed to get pic count:',
           err);
@@ -166,8 +167,8 @@ function main(next) {
           return iterate();
         },2000);
     
-  });
-
+    });
+    
   next();
 }
 

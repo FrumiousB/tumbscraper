@@ -5,7 +5,7 @@ exports.FS_SYNC_RUNSTATE_STOPPED = 'stopped';
 exports.FS_SYNC_RUNSTATE_STOPPING = 'stopping';
 exports.FS_SYNC_RUNSTATE_ERROR = 'error';
 
-exports.TUMBLR_SYNC_RUNSTATE_RUNNING_FIRST = 'runningfirst';
+exports.TUMBLR_SYNC_RUNSTATE_RUNNING_FIRST= 'runningfirst';
 exports.TUMBLR_SYNC_RUNSTATE_RUNNING_MINOR = 'runningminor';
 exports.TUMBLR_SYNC_RUNSTATE_STOPPED = 'stopped';
 exports.TUMBLR_SYNC_RUNSTATE_STOPPING = 'stopping';

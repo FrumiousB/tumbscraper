@@ -37,6 +37,7 @@ function init (ckey, csecret, app, appcf, callback) {
         return callback(err, null);
     }
     
+    logger.log('tumbhelper:init: keys are non-null');
     tumblrConsumerKey = ckey;
     tumblrConsumerSecret = csecret;
 
@@ -57,6 +58,7 @@ function init (ckey, csecret, app, appcf, callback) {
                     appConfig.tumblrOauthAccessTokenSecret;
                     
                 // continue on to configure oauth
+                logger.log('tumbhelper:setting up oauth helper');
                 setupOauthHelper(app, callback);
             }
         });
@@ -94,8 +96,8 @@ function setupOauthHelper(app, callback) {
       }
       else {
         logger.log('TumblrOAuthSetup: Auth successful');
-//        logger.log('Access token =', accessKeys.access_token);
-//        logger.log('Access secret =', accessKeys.access_secret);
+        logger.log('Access token =', accessKeys.access_token);
+        logger.log('Access secret =', accessKeys.access_secret);
         tumblrOauthAccessToken = accessKeys.access_token;
         tumblrOauthAccessTokenSecret = accessKeys.access_secret;
         

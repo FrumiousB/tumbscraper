@@ -48,7 +48,7 @@ function setupTumblrOauth(app,consumer_key,consumer_secret,callback) {
         if (!tumblrAccessTokens.access_token || !tumblrAccessTokens.access_secret) {
             res.redirect('/auth/request');
         }
-        logger.log('get \/')
+        logger.log('get \/');
         res.send('You are logged in and ready to go');
     });
 

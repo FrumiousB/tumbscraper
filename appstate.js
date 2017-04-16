@@ -76,13 +76,14 @@ function setConfig (newConfig,callback) {
             throw error;
         }
         
-        // logger.log('dbSetConfig: results from find:', results);
+        logger.log('dbSetConfig: results from find:', results);
 
         // if there is no current config record, save this one
         
         if (results.length === 0) {
-            // logger.log('dbSetConfig: saving config for first time:',
-            // newConfig._id);
+            logger.log('dbSetConfig: saving config for first time:',
+            newConfig._id);
+            
             newConfig.save(function PostSaveCallback (err) {
                 if (err) {
                     logger.log('appstate:setConfig: got err from save:',err);
@@ -159,14 +160,29 @@ function getConfig (callback) {
             outererr.previous = err;
             callback(outererr,null);
         }
-        if (results.length != 1) {
-            var err = new Error(
-                'appstate:getConfig: got incorrect # of config records:', 
-                results.length);
-            callback(err, null);
+        
+        if (results.length == 0) { // we need to initialize this config database
+            logger.log('getConfig: no config record found; creating...');
+            var initialConfig = new DbConfig;
+            setConfig(initialConfig, function doResults(err, config) {
+                logger.log('getConfig: db initialize starting');
+                if (err) {
+                    logger.log('getConfig: db initilize failed',err);
+                } else {
+                    callback(null,config);
+                }
+            });
         } else {
-            // logger.log('getConfig: returning ',results[0]);
-            callback(null,results[0]);
+            if (results.length != 1) {
+                var err = new Error(
+                    'appstate:getConfig: got incorrect # of config records:', 
+                    results.length);
+                callback(err, null);
+            
+            } else {
+                // logger.log('getConfig: returning ',results[0]);
+                callback(null,results[0]);
+            }
         }
     });
 }

@@ -12,24 +12,26 @@ var appmodel = require('./model.js');
 var dashboard = require('./dashboard.js');
 
 var model = appmodel.model;
+var wiring = appmodel.wiring;
 
 // process all the info from the config file
 var config = require('../config/config.js');
 
 if (process.env.IP)
-  model.IP = process.env.IP
+  wiring.IP = process.env.IP;
 else  
-  model.IP = config.ip;
+  wiring.IP = config.ip;
   
 if (process.env.PORT)
-  model.PORT = process.env.PORT
+  wiring.PORT = process.env.PORT;
 else
-  model.PORT = config.port;
+  wiring.PORT = config.port;
 
 function fakeControllerExecute (command) {
 
   if (model === undefined) {
-
+    logger.log('fakeControllerExecute: null model');
+    throw new Error('null model');
   }
   
   if (typeof(command) != 'string') {
@@ -47,12 +49,19 @@ function fakeControllerExecute (command) {
           // code
           break;
           
-      case 'tumbsyncstart':
+      case 'tumbsyncreset':
+            // code
+            logger.log('controller execute: tumbsyncreset');
+            model.TumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_STOPPED;
+            wiring.notify({tumblrSyncRunState: appmodel.TUMBLR_SYNC_RUNSTATE_STOPPED});
+            break;
+      
+      case 'tumbsyncgo':
           // code
-          logger.log('controller execute: tumbsyncstart');
+          logger.log('controller execute: tumbsyncgo');
           //tumblrsync.start();
           model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING;
-          model.notify({tumblrSyncRunState: appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING});
+          wiring.notify({tumblrSyncRunState: appmodel.TUMBLR_SYNC_RUNSTATE_RUNNING});
           break;
           
       case 'tumbsyncstop':
@@ -61,13 +70,12 @@ function fakeControllerExecute (command) {
           //tumblrsync.stop();
 
           model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_STOPPING;
-          model.notify({tumblrSyncRunState: appmodel.TUMBLR_SYNC_RUNSTATE_STOPPING});
+          wiring.notify({tumblrSyncRunState: appmodel.TUMBLR_SYNC_RUNSTATE_STOPPING});
           
           setTimeout(function ContinueAfterWait() {
             model.tumblrSyncRunState = appmodel.TUMBLR_SYNC_RUNSTATE_STOPPED;
-            model.notify({tumblrSyncRunState: appmodel.TUMBLR_SYNC_RUNSTATE_STOPPED});
+            wiring.notify({tumblrSyncRunState: appmodel.TUMBLR_SYNC_RUNSTATE_STOPPED});
           },2000);
-          
           break;
       
       default:
@@ -80,9 +88,12 @@ function fakeControllerExecute (command) {
 
 
 
-function fakeControllerInit (m) { logger.log('shimController:init'); }
+function fakeControllerInit (m) { 
+  logger.log('shimController:init'); 
+  wiring.notify = dashboard.notify;
+}
 var controller = { init: fakeControllerInit,
-                   execute: fakeControllerExecute};
+                   execute: fakeControllerExecute };
                    
 var setupWebServer = function(next) {
   logger.log('setupWebServer: starting');
@@ -92,9 +103,9 @@ var setupWebServer = function(next) {
   app.use(express.methodOverride());
   app.use(express.errorHandler());
 
-  model.server = http.createServer(app);
+  wiring.server = http.createServer(app);
   app.use(express.static(path.resolve(__dirname, 'client')));
-  model.app = app;
+  wiring.app = app;
 
   logger.log('setupWebServer: we\'re done here');
   next();
@@ -102,15 +113,16 @@ var setupWebServer = function(next) {
 
 function listenWebServer(next){
   logger.log('listenWebServer: starting');
-  var listener = model.server.listen(model.PORT, model.IP, function () {
+  var listener = wiring.server.listen(wiring.PORT, wiring.IP, function () {
       logger.log('listenWebServer:',listener.address().address,':',
                   listener.address().port);
+      logger.log('listenWebServer: should be ready to refresh page');
       next();
   });
 }
 
 function setupDashboard(next) {
-  dashboard.init(model,controller);
+  dashboard.init(model,controller,wiring.server);
   logger.addSink(dashboard.log);
   next();
 }
@@ -119,7 +131,7 @@ function setupDashboard(next) {
 function main(next) {
   controller.init(model);
   model.appRunState = appmodel.APP_RUNSTATE_READY;
-  model.notify({appRunState: appmodel.APP_RUNSTATE_READY});
+  wiring.notify({appRunState: appmodel.APP_RUNSTATE_READY});
   logger.log('scraper main - all set up, ready for action');
 //  controller.execute('tumbsyncstart');
   next();
